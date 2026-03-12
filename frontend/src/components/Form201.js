@@ -142,20 +142,7 @@ export default function Form201(){
   function checkRequiredPersonal(){ return form.rank.trim() && form.last_name.trim() && form.first_name.trim(); }
 
   function checkRequiredDocs(){
-    const singlesNew = [pds, appointment, promotion, designation, reassignment, diploma, eligibility, iper, saln, pft, rca];
-    const existingSingles = [pdsExisting, appointmentExisting, promotionExisting, designationExisting, reassignmentExisting, diplomaExisting, eligibilityExisting, iperExisting, salnExisting, pftExisting, rcaExisting];
-    // require either existing or new file for each single doc
-    for (let i=0;i<singlesNew.length;i++){
-      if (!singlesNew[i] && !existingSingles[i]) return false;
-    }
-    if (!mandatory || mandatory.length===0) return false;
-    if (!specialized || specialized.length===0) return false;
-    // ensure at least one file per training row
-    // for mandatory, allow existing entries OR new files
-    const mandHasExisting = (mandatoryExisting && mandatoryExisting.length>0);
-    if (!mandHasExisting && mandatory.some(m=>m.file===null)) return false;
-    const specHasExisting = (specializedExisting && specializedExisting.length>0);
-    if (!specHasExisting && specialized.some(s=>s.file===null)) return false;
+    // documents are now optional at creation; always allow submit from UI
     return true;
   }
 
@@ -170,36 +157,52 @@ export default function Form201(){
     data.append('unit', form.unit);
     data.append('status', form.status);
     // single files - only append if new file selected
-    if (pds) data.append('pds', pds);
-    if (appointment) data.append('appointment', appointment);
-    if (promotion) data.append('promotion', promotion);
-    if (designation) data.append('designation', designation);
-    if (reassignment) data.append('reassignment', reassignment);
-    if (diploma) data.append('diploma', diploma);
-    if (eligibility) data.append('eligibility', eligibility);
-    if (iper) data.append('iper', iper);
-    if (saln) data.append('saln', saln);
-    if (pft) data.append('pft', pft);
-    if (rca) data.append('rca', rca);
+    let hasSingleFiles = false;
+    if (pds) { data.append('pds', pds); hasSingleFiles = true; }
+    if (appointment) { data.append('appointment', appointment); hasSingleFiles = true; }
+    if (promotion) { data.append('promotion', promotion); hasSingleFiles = true; }
+    if (designation) { data.append('designation', designation); hasSingleFiles = true; }
+    if (reassignment) { data.append('reassignment', reassignment); hasSingleFiles = true; }
+    if (diploma) { data.append('diploma', diploma); hasSingleFiles = true; }
+    if (eligibility) { data.append('eligibility', eligibility); hasSingleFiles = true; }
+    if (iper) { data.append('iper', iper); hasSingleFiles = true; }
+    if (saln) { data.append('saln', saln); hasSingleFiles = true; }
+    if (pft) { data.append('pft', pft); hasSingleFiles = true; }
+    if (rca) { data.append('rca', rca); hasSingleFiles = true; }
 
     // trainings: append titles and files for new rows
-    mandatory.forEach(m => { if (m.file) { data.append('mandatory_titles', m.title); data.append('mandatory_files', m.file); } });
-    specialized.forEach(s => { if (s.file) { data.append('specialized_titles', s.title); data.append('specialized_files', s.file); } });
+    let hasTrainingFiles = false;
+    mandatory.forEach(m => { if (m.file) { hasTrainingFiles = true; data.append('mandatory_titles', m.title); data.append('mandatory_files', m.file); } });
+    specialized.forEach(s => { if (s.file) { hasTrainingFiles = true; data.append('specialized_titles', s.title); data.append('specialized_files', s.file); } });
 
-    // include deletions if any
+    // include deletions if any (only relevant on edit)
     if (deleteMandatoryIds && deleteMandatoryIds.length>0) data.append('delete_mandatory_ids', JSON.stringify(deleteMandatoryIds));
     if (deleteSpecializedIds && deleteSpecializedIds.length>0) data.append('delete_specialized_ids', JSON.stringify(deleteSpecializedIds));
+
+    const hasAnyFiles = hasSingleFiles || hasTrainingFiles;
 
     try{
       if (editId){
         await axios.put(`http://localhost:8000/api/personnel/${editId}`, data, { headers: {'Content-Type':'multipart/form-data'} });
-      } else {
+      } else if (hasAnyFiles) {
         await axios.post('http://localhost:8000/api/personnel/', data, { headers: {'Content-Type':'multipart/form-data'} });
+      } else {
+        // no documents selected – call basic endpoint that only expects form fields
+        await axios.post('http://localhost:8000/api/personnel/basic', data, { headers: {'Content-Type':'multipart/form-data'} });
       }
       setShowModal(false);
       load();
     }catch(err){
-      alert('Error saving record: '+ (err.response?.data?.detail || err.message));
+      let message = err.message;
+      const detail = err.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        message = detail.map(d => d.msg || JSON.stringify(d)).join('; ');
+      } else if (typeof detail === 'string') {
+        message = detail;
+      } else if (detail) {
+        message = JSON.stringify(detail);
+      }
+      alert('Error saving record: ' + message);
     }
   }
 

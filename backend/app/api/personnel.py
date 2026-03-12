@@ -23,6 +23,36 @@ def startup():
     init_db()
 
 
+@router.post("/basic", response_model=schemas.PersonnelSchema)
+def create_personnel_basic(
+    rank: str = Form(...),
+    last_name: str = Form(...),
+    first_name: str = Form(...),
+    mi: Optional[str] = Form(None),
+    suffix: Optional[str] = Form(None),
+    unit: str = Form(...),
+    status: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Create a personnel record without requiring any documents.
+    Documents and trainings can be attached later via the update endpoint.
+    """
+    p = models.Personnel(
+        rank=rank,
+        last_name=last_name,
+        first_name=first_name,
+        mi=mi,
+        suffix=suffix,
+        unit=unit,
+        status=status,
+    )
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return p
+
+
 @router.post("/", response_model=schemas.PersonnelSchema)
 async def create_personnel(
     rank: str = Form(...),
@@ -32,33 +62,25 @@ async def create_personnel(
     suffix: Optional[str] = Form(None),
     unit: str = Form(...),
     status: str = Form(...),
-    # single-file required documents
-    pds: UploadFile = File(...),
-    appointment: UploadFile = File(...),
-    promotion: UploadFile = File(...),
-    designation: UploadFile = File(...),
-    reassignment: UploadFile = File(...),
-    diploma: UploadFile = File(...),
-    eligibility: UploadFile = File(...),
-    iper: UploadFile = File(...),
-    saln: UploadFile = File(...),
-    pft: UploadFile = File(...),
-    rca: UploadFile = File(...),
-    # trainings: lists
+    # single-file documents (now optional so record can be saved even if incomplete)
+    pds: Optional[UploadFile] = File(None),
+    appointment: Optional[UploadFile] = File(None),
+    promotion: Optional[UploadFile] = File(None),
+    designation: Optional[UploadFile] = File(None),
+    reassignment: Optional[UploadFile] = File(None),
+    diploma: Optional[UploadFile] = File(None),
+    eligibility: Optional[UploadFile] = File(None),
+    iper: Optional[UploadFile] = File(None),
+    saln: Optional[UploadFile] = File(None),
+    pft: Optional[UploadFile] = File(None),
+    rca: Optional[UploadFile] = File(None),
+    # trainings: lists (optional)
     mandatory_files: Optional[List[UploadFile]] = File(None),
     mandatory_titles: Optional[List[str]] = Form(None),
     specialized_files: Optional[List[UploadFile]] = File(None),
     specialized_titles: Optional[List[str]] = Form(None),
     db: Session = Depends(get_db),
 ):
-    # validate required documents presence
-    required_docs = [pds, appointment, promotion, designation, reassignment, diploma, eligibility, iper, saln, pft, rca]
-    if any(d is None for d in required_docs):
-        raise HTTPException(status_code=400, detail='All 11 required single documents must be uploaded')
-    if not mandatory_files or len(mandatory_files) == 0:
-        raise HTTPException(status_code=400, detail='At least one mandatory training certificate is required')
-    if not specialized_files or len(specialized_files) == 0:
-        raise HTTPException(status_code=400, detail='At least one specialized training certificate is required')
 
     # create personnel entry
     p = models.Personnel(
@@ -78,7 +100,9 @@ async def create_personnel(
     person_folder = os.path.join('uploads', 'form_201', personnel_folder_name(first_name, last_name))
     os.makedirs(person_folder, exist_ok=True)
 
-    async def save_single(file_obj: UploadFile, shortname: str):
+    async def save_single(file_obj: Optional[UploadFile], shortname: str):
+        if not file_obj:
+            return
         ext = os.path.splitext(file_obj.filename)[1] or '.pdf'
         dest_name = f"FORM201_{first_name}_{last_name}_{shortname}{ext}"
         dest_path = os.path.join(person_folder, dest_name)
@@ -90,50 +114,62 @@ async def create_personnel(
         db.add(doc)
 
     # map and save
-    await save_single(pds, 'pds')
-    await save_single(appointment, 'appointment')
-    await save_single(promotion, 'promotion')
-    await save_single(designation, 'designation')
-    await save_single(reassignment, 'reassignment')
-    await save_single(diploma, 'diploma')
-    await save_single(eligibility, 'eligibility')
-    await save_single(iper, 'iper')
-    await save_single(saln, 'saln')
-    await save_single(pft, 'pft')
-    await save_single(rca, 'rca')
+    await save_single(pds, "pds")
+    await save_single(appointment, "appointment")
+    await save_single(promotion, "promotion")
+    await save_single(designation, "designation")
+    await save_single(reassignment, "reassignment")
+    await save_single(diploma, "diploma")
+    await save_single(eligibility, "eligibility")
+    await save_single(iper, "iper")
+    await save_single(saln, "saln")
+    await save_single(pft, "pft")
+    await save_single(rca, "rca")
 
     # trainings
     # save mandatory
-    for idx, f in enumerate(mandatory_files):
-        title = ''
-        if mandatory_titles and idx < len(mandatory_titles):
-            title = mandatory_titles[idx]
-        safe_title = title.replace(' ', '_') if title else f'mandatory_{idx+1}'
-        ext = os.path.splitext(f.filename)[1] or '.pdf'
-        dest_name = f"FORM201_{first_name}_{last_name}_mandatory_{safe_title}{ext}"
-        dest_path = os.path.join(person_folder, dest_name)
-        content = await f.read()
-        with open(dest_path, 'wb') as out:
-            out.write(content)
-            norm_path = dest_path.replace('\\','/')
-            tc = models.TrainingCertificate(personnel_id=p.id, category='mandatory', title=title or safe_title, file_path=norm_path)
-        db.add(tc)
+    if mandatory_files:
+        for idx, f in enumerate(mandatory_files):
+            title = ""
+            if mandatory_titles and idx < len(mandatory_titles):
+                title = mandatory_titles[idx]
+            safe_title = title.replace(" ", "_") if title else f"mandatory_{idx+1}"
+            ext = os.path.splitext(f.filename)[1] or ".pdf"
+            dest_name = f"FORM201_{first_name}_{last_name}_mandatory_{safe_title}{ext}"
+            dest_path = os.path.join(person_folder, dest_name)
+            content = await f.read()
+            with open(dest_path, "wb") as out:
+                out.write(content)
+            norm_path = dest_path.replace("\\", "/")
+            tc = models.TrainingCertificate(
+                personnel_id=p.id,
+                category="mandatory",
+                title=title or safe_title,
+                file_path=norm_path,
+            )
+            db.add(tc)
 
     # save specialized
-    for idx, f in enumerate(specialized_files):
-        title = ''
-        if specialized_titles and idx < len(specialized_titles):
-            title = specialized_titles[idx]
-        safe_title = title.replace(' ', '_') if title else f'specialized_{idx+1}'
-        ext = os.path.splitext(f.filename)[1] or '.pdf'
-        dest_name = f"FORM201_{first_name}_{last_name}_specialized_{safe_title}{ext}"
-        dest_path = os.path.join(person_folder, dest_name)
-        content = await f.read()
-        with open(dest_path, 'wb') as out:
-            out.write(content)
-            norm_path = dest_path.replace('\\','/')
-            tc = models.TrainingCertificate(personnel_id=p.id, category='specialized', title=title or safe_title, file_path=norm_path)
-        db.add(tc)
+    if specialized_files:
+        for idx, f in enumerate(specialized_files):
+            title = ""
+            if specialized_titles and idx < len(specialized_titles):
+                title = specialized_titles[idx]
+            safe_title = title.replace(" ", "_") if title else f"specialized_{idx+1}"
+            ext = os.path.splitext(f.filename)[1] or ".pdf"
+            dest_name = f"FORM201_{first_name}_{last_name}_specialized_{safe_title}{ext}"
+            dest_path = os.path.join(person_folder, dest_name)
+            content = await f.read()
+            with open(dest_path, "wb") as out:
+                out.write(content)
+            norm_path = dest_path.replace("\\", "/")
+            tc = models.TrainingCertificate(
+                personnel_id=p.id,
+                category="specialized",
+                title=title or safe_title,
+                file_path=norm_path,
+            )
+            db.add(tc)
 
     db.commit()
     db.refresh(p)
