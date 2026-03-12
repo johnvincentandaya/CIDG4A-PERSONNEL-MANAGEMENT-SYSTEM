@@ -1,50 +1,135 @@
-import React, {useEffect, useState} from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 
-export default function Dashboard(){
+const UNITS = ['RHQ', 'Cavite', 'Laguna', 'Batangas', 'Rizal', 'Quezon'];
+
+export default function Dashboard() {
   const [counts, setCounts] = useState({});
-  useEffect(()=>{
-    axios.get('http://localhost:8000/api/personnel/counts').then(r=>setCounts(r.data)).catch(()=>{});
-  },[]);
-  const units = ['RHQ','Cavite','Laguna','Batangas','Rizal','Quezon'];
+
+  useEffect(() => {
+    axios
+      .get('http://localhost:8000/api/personnel/counts')
+      .then(r => setCounts(r.data))
+      .catch(() => {});
+  }, []);
+
+  const totalPersonnel = useMemo(
+    () => UNITS.reduce((sum, u) => sum + (counts[u] || 0), 0),
+    [counts]
+  );
+
   return (
     <div>
-      <h3>CRIMINAL INVESTIGATION AND DETECTION GROUP REGION 4A</h3>
-      <p>Welcome to CIDG RFU4A Personnel Management System</p>
-      <div className="row">
+      <div className="page-header">
+        <div className="page-title-block">
+          <div className="page-eyebrow">CIDG RFU4A</div>
+          <h1 className="page-title">Personnel Management Overview</h1>
+          <p className="page-subtitle">
+            Executive view of personnel strength and health monitoring across all CIDG RFU4A units.
+          </p>
+        </div>
+        <div className="page-header-actions">
+          <button className="btn-quiet">
+            <i className="bi bi-download" />
+            Export Snapshot
+          </button>
+        </div>
+      </div>
+
+      <div className="stat-grid">
+        <div className="stat-card">
+          <div className="stat-card-label">Total Personnel</div>
+          <div className="stat-card-value">{totalPersonnel}</div>
+          <div className="stat-card-meta">Across all RFU4A units</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card-label">Active Units</div>
+          <div className="stat-card-value">{UNITS.length}</div>
+          <div className="stat-card-meta">RHQ and 5 provincial offices</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card-label">BMI Records (Month)</div>
+          <div className="stat-card-value">0</div>
+          <div className="stat-card-meta">Monitoring coverage this month</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card-label">Compliance Status</div>
+          <div className="stat-card-value">On Track</div>
+          <div className="stat-card-meta">Based on latest records</div>
+        </div>
+      </div>
+
+      <div className="row g-3">
         <div className="col-12 col-lg-8">
-          <div className="card mb-3">
-            <div className="card-body">Audio-Visual Presentation (placeholder)</div>
+          <div className="card-elevated mb-3">
+            <div className="p-3 border-bottom border-light">
+              <div className="section-title">Command Briefing</div>
+              <div className="d-flex justify-content-between align-items-center">
+                <div className="text-muted small">
+                  Placeholder area for audio-visual briefing or key operational highlights.
+                </div>
+                <button className="btn-quiet">
+                  <i className="bi bi-play-circle" />
+                  View Presentation
+                </button>
+              </div>
+            </div>
+            <div className="p-3 text-muted small">
+              This section can host a short command briefing video, organizational overview, or latest circulars
+              relevant to personnel administration.
+            </div>
           </div>
-          <div className="card mb-3">
-            <div className="card-body">Organizational Chart (placeholder)</div>
+
+          <div className="card-section mission-vision-card mb-3">
+            <div className="mission-vision-toggle">
+              <button className="mission-vision-pill active">Mission</button>
+              <button className="mission-vision-pill">Vision</button>
+            </div>
+            <div className="mb-2 fw-semibold">CRIMINAL INVESTIGATION AND DETECTION GROUP</div>
+            <p className="mb-2 small text-muted">
+              Dedicated to the investigation and detection of crimes through professional, disciplined, and highly
+              accountable police service.
+            </p>
+            <ul className="small mb-0 text-muted">
+              <li>Maintain accurate and up-to-date personnel records for all CIDG RFU4A personnel.</li>
+              <li>Ensure compliance with documentary, training, and health monitoring requirements.</li>
+              <li>Support command decision-making through timely and reliable personnel data.</li>
+            </ul>
           </div>
-          <div className="d-flex gap-3">
-            <div className="card flex-fill bg-primary text-white p-3">Mission</div>
-            <div className="card flex-fill bg-secondary text-white p-3">Vision</div>
+
+          <div className="card-section p-3">
+            <div className="section-title">Organizational Structure</div>
+            <div className="text-muted small mb-2">
+              Visual representation of RFU4A organizational structure can be integrated here for quick reference.
+            </div>
+            <div className="border rounded-3 p-3 text-center text-muted small" style={{ borderStyle: 'dashed' }}>
+              Organizational chart placeholder – upload or embed official chart when available.
+            </div>
           </div>
         </div>
+
         <div className="col-12 col-lg-4">
-          <div className="card p-3 mb-3">
-            <h6>Total Personnel per Unit</h6>
-            {units.map(u=> (
-              <div key={u} className="d-flex justify-content-between py-2 border-bottom">
-                <div>{u}</div>
-                <div className="fw-bold">{counts[u] ?? 0}</div>
+          <div className="card-section p-3 mb-3">
+            <div className="section-title">Personnel by Unit</div>
+            {UNITS.map(u => (
+              <div key={u} className="metric-list-row">
+                <div className="metric-list-label">{u}</div>
+                <div className="metric-list-value">{counts[u] ?? 0}</div>
               </div>
             ))}
           </div>
-          <div className="card p-3">
-            <h6>BMI Records This Month per Unit</h6>
-            {units.map(u=> (
-              <div key={u} className="d-flex justify-content-between py-2 border-bottom">
-                <div>{u}</div>
-                <div className="fw-bold">0</div>
+
+          <div className="card-section p-3">
+            <div className="section-title">BMI Monitoring (This Month)</div>
+            {UNITS.map(u => (
+              <div key={u} className="metric-list-row">
+                <div className="metric-list-label">{u}</div>
+                <div className="metric-list-value text-muted">0 records</div>
               </div>
             ))}
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

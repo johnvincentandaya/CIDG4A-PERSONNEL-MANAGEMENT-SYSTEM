@@ -1,6 +1,15 @@
 import React, {useEffect, useState} from 'react';
 import axios from 'axios';
 
+function classificationClass(name){
+  const key = (name || '').toLowerCase();
+  if (key.includes('normal')) return 'badge-bmi badge-bmi--normal';
+  if (key.includes('over')) return 'badge-bmi badge-bmi--overweight';
+  if (key.includes('obese')) return 'badge-bmi badge-bmi--obese';
+  if (key.includes('under')) return 'badge-bmi badge-bmi--underweight';
+  return 'badge-bmi badge-bmi--normal';
+}
+
 export default function BMIMonitor(){
   const [records, setRecords] = useState([]);
   const [showModal, setShowModal] = useState(false);
@@ -40,29 +49,95 @@ export default function BMIMonitor(){
 
   return (
     <div>
-      <h3>BMI Monitoring</h3>
-      <p>Track and monitor Body Mass Index records</p>
-      <div className="card p-3">
-        <div className="d-flex justify-content-between mb-3">
-          <div className="d-flex gap-2">
-            <select className="form-select"><option>All Units</option></select>
-            <select className="form-select"><option>All Months</option></select>
-            <select className="form-select"><option>All Years</option></select>
+      <div className="page-header">
+        <div className="page-title-block">
+          <div className="page-eyebrow">Health Monitoring</div>
+          <h1 className="page-title">BMI Monitoring</h1>
+          <p className="page-subtitle">
+            Monitor Body Mass Index records and compliance across CIDG RFU4A units for operational fitness.
+          </p>
+        </div>
+        <div className="page-header-actions">
+          <button className="btn-quiet">
+            <i className="bi bi-heart-pulse" />
+            Monthly BMI overview
+          </button>
+        </div>
+      </div>
+
+      <div className="card-section p-3">
+        <div className="filter-bar">
+          <div className="filter-controls">
+            <select className="form-select form-select-sm"><option>All Units</option></select>
+            <select className="form-select form-select-sm"><option>All Months</option></select>
+            <select className="form-select form-select-sm"><option>All Years</option></select>
           </div>
           <div>
-            <button className="btn btn-outline-secondary me-2">Generate Report</button>
-            <button className="btn btn-primary" onClick={openNew}>+ New Record</button>
+            <button className="btn btn-outline-secondary btn-sm me-2">
+              <i className="bi bi-file-earmark-text me-1" />
+              Generate Report
+            </button>
+            <button className="btn btn-primary btn-sm" onClick={openNew}>
+              <i className="bi bi-plus-lg me-1" />
+              New Record
+            </button>
           </div>
         </div>
-        <div style={{overflow:'auto'}}>
-          <table className="table table-striped">
-            <thead><tr><th>Rank</th><th>Name</th><th>Unit</th><th>Age</th><th>Height (cm)</th><th>Weight (kg)</th><th>BMI</th><th>Result</th><th>Classification</th><th>Date Taken</th><th>Actions</th></tr></thead>
-            <tbody>
-              {records.map(r=> (
-                <tr key={r.id}><td>{r.rank}</td><td>{r.name}</td><td>{r.unit}</td><td>{r.age}</td><td>{r.height_cm}</td><td>{r.weight_kg}</td><td>{r.bmi}</td><td>{r.result}</td><td>{r.classification}</td><td>{r.date_taken ? new Date(r.date_taken).toLocaleDateString(): ''}</td><td><button className="btn btn-sm btn-outline-primary">Edit</button></td></tr>
-              ))}
-            </tbody>
-          </table>
+
+        <div className="table-wrapper">
+          <div style={{overflow:'auto'}}>
+            <table className="table table-hover data-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Name</th>
+                  <th>Unit</th>
+                  <th>Age</th>
+                  <th>Height (cm)</th>
+                  <th>Weight (kg)</th>
+                  <th>BMI</th>
+                  <th>Result</th>
+                  <th>Classification</th>
+                  <th>Date Taken</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {records.length === 0 && (
+                  <tr>
+                    <td colSpan={11}>
+                      <div className="table-empty-state">
+                        No BMI records captured yet. Add a new record to begin monitoring personnel BMI trends.
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {records.map(r=> (
+                  <tr key={r.id}>
+                    <td>{r.rank}</td>
+                    <td>{r.name}</td>
+                    <td>{r.unit}</td>
+                    <td>{r.age}</td>
+                    <td>{r.height_cm}</td>
+                    <td>{r.weight_kg}</td>
+                    <td>{r.bmi}</td>
+                    <td>{r.result}</td>
+                    <td>
+                      <span className={classificationClass(r.classification)}>
+                        {r.classification}
+                      </span>
+                    </td>
+                    <td>{r.date_taken ? new Date(r.date_taken).toLocaleDateString(): ''}</td>
+                    <td>
+                      <button className="btn btn-sm btn-outline-primary">
+                        <i className="bi bi-pencil-square" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 

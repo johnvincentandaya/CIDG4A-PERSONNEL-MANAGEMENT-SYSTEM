@@ -1,20 +1,58 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
+import cidgLogo from '../assets/cidg-logo.png';
 
 export default function Sidebar(){
   return (
-    <div style={{width:260,background:'#163b8f',color:'#fff',minHeight:'100vh'}} className="d-flex flex-column p-3">
-      <div className="mb-4">
-        <div className="rounded bg-white d-inline-block p-2" style={{color:'#163b8f'}}>CIDG</div>
-        <div className="mt-2">CRIMINAL INVESTIGATION AND DETECTION GROUP</div>
+    <aside className="sidebar">
+      <div className="sidebar-header">
+        <div className="sidebar-logo-wrap">
+          <img
+            src={cidgLogo}
+            alt="CIDG logo"
+            className="sidebar-logo"
+          />
+        </div>
+        <div>
+          <div className="sidebar-agency">CIDG RFU4A</div>
+          <div className="sidebar-subtitle">Personnel Management System</div>
+        </div>
       </div>
-      <nav className="nav nav-pills flex-column">
-        <NavLink to="/dashboard" className="nav-link text-white mb-2" style={{background:'transparent'}} activeclassname="active">Dashboard</NavLink>
-        <NavLink to="/form201" className="nav-link text-white mb-2">Form 201</NavLink>
-        <NavLink to="/bmi" className="nav-link text-white mb-2">BMI Monitoring</NavLink>
-        
+
+      <div className="sidebar-nav-label">Navigation</div>
+      <nav className="sidebar-nav">
+        <NavLink
+          to="/dashboard"
+          className={({ isActive }) =>
+            'sidebar-nav-link' + (isActive ? ' active' : '')
+          }
+        >
+          <i className="bi bi-speedometer2" />
+          <span>Dashboard</span>
+        </NavLink>
+        <NavLink
+          to="/form201"
+          className={({ isActive }) =>
+            'sidebar-nav-link' + (isActive ? ' active' : '')
+          }
+        >
+          <i className="bi bi-folder2-open" />
+          <span>Form 201 Records</span>
+        </NavLink>
+        <NavLink
+          to="/bmi"
+          className={({ isActive }) =>
+            'sidebar-nav-link' + (isActive ? ' active' : '')
+          }
+        >
+          <i className="bi bi-activity" />
+          <span>BMI Monitoring</span>
+        </NavLink>
       </nav>
-      <div className="mt-auto small">© 2026 CIDG RFU4A</div>
-    </div>
+
+      <div className="sidebar-footer">
+        © {new Date().getFullYear()} CIDG RFU4A
+      </div>
+    </aside>
   )
 }

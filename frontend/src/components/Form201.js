@@ -3,6 +3,24 @@ import axios from 'axios';
 
 const UNITS = ['RHQ','Cavite','Laguna','Batangas','Rizal','Quezon'];
 const STATUS = ['Active','Reassigned','Retired'];
+const RANKS = [
+  'PGEN',
+  'PLTGEN',
+  'PMGEN',
+  'PBGEn',
+  'PCOL',
+  'PLTCOL',
+  'PMAJ',
+  'PCPT',
+  'PLT',
+  'PEMS',
+  'PCMS',
+  'PSMS',
+  'PMSg',
+  'PSSg',
+  'PCpl',
+  'Pat'
+];
 
 function TrainingInput({entries, setEntries, category}){
   function update(idx, key, value){
@@ -187,35 +205,111 @@ export default function Form201(){
 
   return (
     <div>
-      <h3>Form 201 - Personnel Records</h3>
-      <p>Manage and view all personnel information and documents</p>
-            <div className="card p-3 mb-3">
-        <div className="d-flex justify-content-between mb-3">
-          <div className="d-flex gap-2">
-            <select className="form-select">
+      <div className="page-header">
+        <div className="page-title-block">
+          <div className="page-eyebrow">Personnel Records</div>
+          <h1 className="page-title">Form 201 Registry</h1>
+          <p className="page-subtitle">
+            Centralized registry of all CIDG RFU4A personnel, including status, unit assignment, and documentary compliance.
+          </p>
+        </div>
+        <div className="page-header-actions">
+          <button className="btn-quiet">
+            <i className="bi bi-funnel" />
+            Saved filter: All Personnel
+          </button>
+        </div>
+      </div>
+
+      <div className="card-section p-3 mb-3">
+        <div className="filter-bar">
+          <div className="filter-controls">
+            <select className="form-select form-select-sm">
               <option>All Units</option>
+              {UNITS.map(u => <option key={u}>{u}</option>)}
             </select>
-            <select className="form-select">
+            <select className="form-select form-select-sm">
               <option>All Status</option>
+              {STATUS.map(s => <option key={s}>{s}</option>)}
             </select>
-            <input className="form-control" placeholder="Search by name or rank..." />
+            <input className="form-control form-control-sm" placeholder="Search by name, rank, or unit" />
           </div>
           <div>
-            <button className="btn btn-outline-secondary me-2">Generate Report</button>
-            <button className="btn btn-primary" onClick={openModal}>+ New Record</button>
+            <button className="btn btn-outline-secondary btn-sm me-2">
+              <i className="bi bi-file-earmark-text me-1" />
+              Generate Report
+            </button>
+            <button className="btn btn-primary btn-sm" onClick={openModal}>
+              <i className="bi bi-plus-lg me-1" />
+              New Record
+            </button>
           </div>
         </div>
-        <div style={{overflow:'auto'}}>
-          <table className="table table-striped">
-            <thead>
-              <tr><th>Rank</th><th>Last Name</th><th>First Name</th><th>M.I.</th><th>Suffix</th><th>Unit</th><th>Status</th><th>Documents</th><th>Date Added</th><th>Actions</th></tr>
-            </thead>
-            <tbody>
-              {records.map(r=> (
-                <tr key={r.id}><td>{r.rank}</td><td>{r.last_name}</td><td>{r.first_name}</td><td>{r.mi}</td><td>{r.suffix}</td><td>{r.unit}</td><td>{r.status}</td><td>{(r.documents||[]).length}/13 documents uploaded{(r.documents||[]).length < 13 ? <span className="text-danger ms-2">(missing)</span> : null}</td><td>{new Date(r.date_added).toLocaleDateString()}</td><td><button className="btn btn-sm btn-outline-primary" onClick={()=>editPerson(r.id)}>Edit</button></td></tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="table-wrapper">
+          <div style={{overflow:'auto'}}>
+            <table className="table table-hover data-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Last Name</th>
+                  <th>First Name</th>
+                  <th>M.I.</th>
+                  <th>Suffix</th>
+                  <th>Unit</th>
+                  <th>Status</th>
+                  <th>Documents</th>
+                  <th>Date Added</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {records.length === 0 && (
+                  <tr>
+                    <td colSpan={10}>
+                      <div className="table-empty-state">
+                        No personnel records found. Use the filters above or create a new record to get started.
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {records.map(r=> {
+                  const docCount = (r.documents || []).length;
+                  const statusKey = (r.status || '').toLowerCase();
+                  return (
+                    <tr key={r.id}>
+                      <td>{r.rank}</td>
+                      <td>{r.last_name}</td>
+                      <td>{r.first_name}</td>
+                      <td>{r.mi}</td>
+                      <td>{r.suffix}</td>
+                      <td>{r.unit}</td>
+                      <td>
+                        <span className={`badge-status badge-status--${statusKey || 'active'}`}>
+                          {r.status}
+                        </span>
+                      </td>
+                      <td>
+                        <span>{docCount}/13 docs</span>
+                        {docCount < 13 && (
+                          <span className="text-danger ms-2 small">(missing)</span>
+                        )}
+                      </td>
+                      <td>{new Date(r.date_added).toLocaleDateString()}</td>
+                      <td>
+                        <button
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={()=>editPerson(r.id)}
+                        >
+                          <i className="bi bi-pencil-square me-1" />
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -235,7 +329,19 @@ export default function Form201(){
                 {activeTab==='personal' && (
                   <div>
                     <div className="row">
-                      <div className="col-md-6 mb-2"><label>Rank *</label><input className="form-control" value={form.rank} onChange={e=>setForm({...form,rank:e.target.value})} /></div>
+                      <div className="col-md-6 mb-2">
+                        <label>Rank *</label>
+                        <select
+                          className="form-select"
+                          value={form.rank}
+                          onChange={e=>setForm({...form,rank:e.target.value})}
+                        >
+                          <option value="">Select rank</option>
+                          {RANKS.map(r => (
+                            <option key={r} value={r}>{r}</option>
+                          ))}
+                        </select>
+                      </div>
                       <div className="col-md-6 mb-2"><label>Last Name *</label><input className="form-control" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})} /></div>
                       <div className="col-md-6 mb-2"><label>First Name *</label><input className="form-control" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})} /></div>
                       <div className="col-md-6 mb-2"><label>Middle Initial</label><input className="form-control" value={form.mi} onChange={e=>setForm({...form,mi:e.target.value})} /></div>

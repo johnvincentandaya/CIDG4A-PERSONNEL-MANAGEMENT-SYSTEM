@@ -10,9 +10,9 @@ import BMIMonitor from './components/BMIMonitor';
 function App() {
   return (
     <BrowserRouter>
-      <div className="d-flex" style={{minHeight:'100vh'}}>
+      <div className="app-shell">
         <Sidebar />
-        <div className="flex-grow-1 p-4 bg-light">
+        <div className="app-main">
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
