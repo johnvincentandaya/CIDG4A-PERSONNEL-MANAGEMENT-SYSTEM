@@ -2,9 +2,28 @@ import os
 from pathlib import Path
 from typing import Tuple
 
+# Project root is one level above `backend/`
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+def get_uploads_dir() -> Path:
+    # Allow override for deployment (e.g. Docker volume)
+    env_dir = os.getenv("UPLOADS_DIR")
+    if env_dir:
+        return Path(env_dir).resolve()
+    return PROJECT_ROOT / "uploads"
+
+def uploads_rel(*parts: str) -> str:
+    # Path stored in DB / returned to frontend (portable)
+    p = Path("uploads").joinpath(*parts)
+    return p.as_posix()
+
+def uploads_abs(*parts: str) -> Path:
+    # Path used for writing files on disk
+    return get_uploads_dir().joinpath(*parts)
+
 def ensure_upload_folders():
-    Path("uploads/form_201").mkdir(parents=True, exist_ok=True)
-    Path("uploads/bmi").mkdir(parents=True, exist_ok=True)
+    uploads_abs("form_201").mkdir(parents=True, exist_ok=True)
+    uploads_abs("bmi").mkdir(parents=True, exist_ok=True)
 
 def personnel_folder_name(first_name: str, last_name: str) -> str:
     name = f"{first_name}_{last_name}".replace(' ', '_')

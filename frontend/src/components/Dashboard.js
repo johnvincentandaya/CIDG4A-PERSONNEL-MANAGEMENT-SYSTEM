@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
+import { api } from '../api';
 
 const UNITS = ['RHQ', 'Cavite', 'Laguna', 'Batangas', 'Rizal', 'Quezon'];
 
 export default function Dashboard() {
   const [counts, setCounts] = useState({});
+  const [orgChartError, setOrgChartError] = useState(false);
 
   useEffect(() => {
-    axios
-      .get('http://localhost:8000/api/personnel/counts')
+    api
+      .get('/api/personnel/counts')
       .then(r => setCounts(r.data))
       .catch(() => {});
   }, []);
@@ -66,46 +67,66 @@ export default function Dashboard() {
               <div className="section-title">Command Briefing</div>
               <div className="d-flex justify-content-between align-items-center">
                 <div className="text-muted small">
-                  Placeholder area for audio-visual briefing or key operational highlights.
+                  Audio-visual presentation of CIDG RFU4A.
                 </div>
-                <button className="btn-quiet">
-                  <i className="bi bi-play-circle" />
-                  View Presentation
-                </button>
               </div>
             </div>
-            <div className="p-3 text-muted small">
-              This section can host a short command briefing video, organizational overview, or latest circulars
-              relevant to personnel administration.
+            <div className="p-3">
+              <div className="ratio ratio-16x9">
+                <iframe
+                  src="https://www.youtube.com/embed/9wHgCvwvwKY"
+                  title="CIDG RFU4A AVP"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                ></iframe>
+              </div>
             </div>
           </div>
 
-          <div className="card-section mission-vision-card mb-3">
-            <div className="mission-vision-toggle">
-              <button className="mission-vision-pill active">Mission</button>
-              <button className="mission-vision-pill">Vision</button>
+          <div className="mission-vision-grid mb-3">
+            <div className="card-section">
+              <div className="section-title">CIDG MISSION</div>
+              <h4>CIDG Mission</h4>
+              <p>
+                Enforce the law, prevent and control crimes, maintain peace and order,
+                and ensure public safety and internal security with the active support
+                of the community.
+              </p>
             </div>
-            <div className="mb-2 fw-semibold">CRIMINAL INVESTIGATION AND DETECTION GROUP</div>
-            <p className="mb-2 small text-muted">
-              Dedicated to the investigation and detection of crimes through professional, disciplined, and highly
-              accountable police service.
-            </p>
-            <ul className="small mb-0 text-muted">
-              <li>Maintain accurate and up-to-date personnel records for all CIDG RFU4A personnel.</li>
-              <li>Ensure compliance with documentary, training, and health monitoring requirements.</li>
-              <li>Support command decision-making through timely and reliable personnel data.</li>
-            </ul>
+            <div className="card-section">
+              <div className="section-title">CIDG VISION</div>
+              <h4>CIDG Vision</h4>
+              <p>
+                By 2031, the CIDG will be a dynamic, responsive and well-equipped agency
+                manned by the most qualified and highly-motivated professionals in search
+                of truth and justice.
+              </p>
+            </div>
           </div>
 
           <div className="card-section p-3">
             <div className="section-title">Organizational Structure</div>
-            <div className="text-muted small mb-2">
+            <div className="text-muted small mb-3">
               Visual representation of RFU4A organizational structure can be integrated here for quick reference.
             </div>
-            <div className="border rounded-3 p-3 text-center text-muted small" style={{ borderStyle: 'dashed' }}>
-              Organizational chart placeholder – upload or embed official chart when available.
+            <div className="text-center">
+              {!orgChartError ? (
+                <img
+                  src="/cidg-org-chart.png"
+                  alt="CIDG RFU4A Organizational Chart"
+                  className="img-fluid rounded"
+                  style={{ maxHeight: '500px', objectFit: 'contain' }}
+                  onError={() => setOrgChartError(true)}
+                />
+              ) : (
+                <div className="border rounded-3 p-3 text-muted small" style={{ borderStyle: 'dashed' }}>
+                  Organizational chart image not found. Add your file to
+                  <code className="ms-1">frontend/public/cidg-org-chart.png</code>
+                  and refresh the page.
+                </div>
+              )}
             </div>
-          </div>
+          </div>  
         </div>
 
         <div className="col-12 col-lg-4">

@@ -1,26 +1,9 @@
-import React, {useEffect, useState, useRef} from 'react';
-import axios from 'axios';
+import React, {useEffect, useState} from 'react';
+import { api, absolutizePath } from '../api';
+import { RANKS } from '../constants/ranks';
 
 const UNITS = ['RHQ','Cavite','Laguna','Batangas','Rizal','Quezon'];
 const STATUS = ['Active','Reassigned','Retired'];
-const RANKS = [
-  'PGEN',
-  'PLTGEN',
-  'PMGEN',
-  'PBGEn',
-  'PCOL',
-  'PLTCOL',
-  'PMAJ',
-  'PCPT',
-  'PLT',
-  'PEMS',
-  'PCMS',
-  'PSMS',
-  'PMSg',
-  'PSSg',
-  'PCpl',
-  'Pat'
-];
 
 function TrainingInput({entries, setEntries, category}){
   function update(idx, key, value){
@@ -83,8 +66,13 @@ export default function Form201(){
   const [deleteMandatoryIds, setDeleteMandatoryIds] = useState([]);
   const [deleteSpecializedIds, setDeleteSpecializedIds] = useState([]);
 
+  // filters
+  const [unitFilter, setUnitFilter] = useState('All Units');
+  const [statusFilter, setStatusFilter] = useState('All Status');
+  const [search, setSearch] = useState('');
+
   useEffect(()=>{ load() },[])
-  function load(){ axios.get('http://localhost:8000/api/personnel/').then(r=>setRecords(r.data)).catch(()=>{}); }
+  function load(){ api.get('/api/personnel/').then(r=>setRecords(r.data)).catch(()=>{}); }
 
   function resetModal(){
     setForm({rank:'',last_name:'',first_name:'',mi:'',suffix:'',unit:'RHQ',status:'Active'});
@@ -99,16 +87,12 @@ export default function Form201(){
   function openModal(){ resetModal(); setShowModal(true); }
 
   function fileUrl(path){
-    if (!path) return null;
-    const p = path.replace(/\\\\/g,'/').replace(/\\/g,'/');
-    const idx = p.indexOf('uploads/');
-    if (idx>=0) return `http://localhost:8000/${p.slice(idx)}`;
-    return `http://localhost:8000/${p}`;
+    return absolutizePath(path);
   }
 
   async function editPerson(id){
     try{
-      const res = await axios.get(`http://localhost:8000/api/personnel/${id}`);
+      const res = await api.get(`/api/personnel/${id}`);
       const p = res.data;
       setEditId(id);
       setForm({rank:p.rank,last_name:p.last_name,first_name:p.first_name,mi:p.mi||'',suffix:p.suffix||'',unit:p.unit,status:p.status});
@@ -183,12 +167,12 @@ export default function Form201(){
 
     try{
       if (editId){
-        await axios.put(`http://localhost:8000/api/personnel/${editId}`, data, { headers: {'Content-Type':'multipart/form-data'} });
+        await api.put(`/api/personnel/${editId}`, data, { headers: {'Content-Type':'multipart/form-data'} });
       } else if (hasAnyFiles) {
-        await axios.post('http://localhost:8000/api/personnel/', data, { headers: {'Content-Type':'multipart/form-data'} });
+        await api.post('/api/personnel/', data, { headers: {'Content-Type':'multipart/form-data'} });
       } else {
         // no documents selected – call basic endpoint that only expects form fields
-        await axios.post('http://localhost:8000/api/personnel/basic', data, { headers: {'Content-Type':'multipart/form-data'} });
+        await api.post('/api/personnel/basic', data, { headers: {'Content-Type':'multipart/form-data'} });
       }
       setShowModal(false);
       load();
@@ -205,6 +189,27 @@ export default function Form201(){
       alert('Error saving record: ' + message);
     }
   }
+
+  const filteredRecords = records.filter(r => {
+    let ok = true;
+    if (unitFilter !== 'All Units') {
+      ok = ok && r.unit === unitFilter;
+    }
+    if (statusFilter !== 'All Status') {
+      ok = ok && r.status === statusFilter;
+    }
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      const haystack = [
+        r.rank || '',
+        r.last_name || '',
+        r.first_name || '',
+        r.unit || '',
+      ].join(' ').toLowerCase();
+      ok = ok && haystack.includes(q);
+    }
+    return ok;
+  });
 
   return (
     <div>
@@ -227,15 +232,28 @@ export default function Form201(){
       <div className="card-section p-3 mb-3">
         <div className="filter-bar">
           <div className="filter-controls">
-            <select className="form-select form-select-sm">
+            <select
+              className="form-select form-select-sm"
+              value={unitFilter}
+              onChange={e => setUnitFilter(e.target.value)}
+            >
               <option>All Units</option>
               {UNITS.map(u => <option key={u}>{u}</option>)}
             </select>
-            <select className="form-select form-select-sm">
+            <select
+              className="form-select form-select-sm"
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value)}
+            >
               <option>All Status</option>
               {STATUS.map(s => <option key={s}>{s}</option>)}
             </select>
-            <input className="form-control form-control-sm" placeholder="Search by name, rank, or unit" />
+            <input
+              className="form-control form-control-sm"
+              placeholder="Search by name, rank, or unit"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
           </div>
           <div>
             <button className="btn btn-outline-secondary btn-sm me-2">
@@ -266,7 +284,7 @@ export default function Form201(){
                 </tr>
               </thead>
               <tbody>
-                {records.length === 0 && (
+                {filteredRecords.length === 0 && (
                   <tr>
                     <td colSpan={10}>
                       <div className="table-empty-state">
@@ -275,7 +293,7 @@ export default function Form201(){
                     </td>
                   </tr>
                 )}
-                {records.map(r=> {
+                {filteredRecords.map(r=> {
                   const docCount = (r.documents || []).length;
                   const statusKey = (r.status || '').toLowerCase();
                   return (

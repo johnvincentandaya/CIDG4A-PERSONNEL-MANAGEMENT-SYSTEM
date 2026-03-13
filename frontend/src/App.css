@@ -435,6 +435,51 @@ body {
   padding: 16px 18px;
 }
 
+.mission-vision-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.mission-vision-grid > .card-section {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  height: 100%;
+  min-height: 260px;
+  padding: 20px;
+}
+
+
+.mission-vision-grid > .card-section .section-title {
+  margin: 0 0 12px 0;
+}
+.mission-vision-grid > .card-section h4,
+.mission-vision-grid > .card-section h4 {
+  margin: 0 0 16px 0;
+}
+
+/* Remove default vertical spacing between mission/vision cards */
+.mission-vision-grid > .card-section + .card-section {
+  margin-top: 0;
+}
+
+.mission-vision-grid > .card-section p {
+  margin: 0;
+  line-height: 1.7;
+  flex-grow: 1;
+}
+
+@media (max-width: 991.98px) {
+  .mission-vision-grid {
+    grid-template-columns: 1fr;
+  }
+  .mission-vision-grid > .card-section {
+    min-height: auto;
+  }
+}
+
 .mission-vision-toggle {
   display: flex;
   gap: 4px;

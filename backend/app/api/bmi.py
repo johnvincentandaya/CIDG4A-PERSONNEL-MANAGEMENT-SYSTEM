@@ -3,7 +3,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import SessionLocal
-from ..utils import ensure_upload_folders, bmi_folder_name
+from ..utils import ensure_upload_folders, bmi_folder_name, uploads_abs, uploads_rel
 import os
 from datetime import datetime
 import calendar
@@ -65,20 +65,18 @@ async def create_bmi(
     photo_right: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    # save photos
     first_name = name.split()[0]
     last_name = '_'.join(name.split()[1:]) if len(name.split())>1 else ''
-    folder = os.path.join('uploads','bmi', bmi_folder_name(first_name, last_name))
-    os.makedirs(folder, exist_ok=True)
-    front_path = os.path.join(folder, f"BMI_{name}_front.jpg")
-    left_path = os.path.join(folder, f"BMI_{name}_left.jpg")
-    right_path = os.path.join(folder, f"BMI_{name}_right.jpg")
-    with open(front_path,'wb') as f:
-        f.write(await photo_front.read())
-    with open(left_path,'wb') as f:
-        f.write(await photo_left.read())
-    with open(right_path,'wb') as f:
-        f.write(await photo_right.read())
+    folder_abs = uploads_abs('bmi', bmi_folder_name(first_name, last_name))
+    folder_rel = uploads_rel('bmi', bmi_folder_name(first_name, last_name))
+    os.makedirs(folder_abs, exist_ok=True)
+    base_name = f"{first_name}_{last_name}" if last_name else first_name
+    front_name = f"BMI_{base_name}_front.jpg"
+    left_name = f"BMI_{base_name}_left.jpg"
+    right_name = f"BMI_{base_name}_right.jpg"
+    front_path_abs = os.path.join(str(folder_abs), front_name)
+    left_path_abs = os.path.join(str(folder_abs), left_name)
+    right_path_abs = os.path.join(str(folder_abs), right_name)
 
     bmi_value = compute_bmi(weight_kg, height_cm)
     classification = classify_bmi(bmi_value)
@@ -88,11 +86,22 @@ async def create_bmi(
         rank=rank, name=name, unit=unit, age=age, sex=sex,
         height_cm=height_cm, weight_kg=weight_kg, waist_cm=waist_cm,
         hip_cm=hip_cm, wrist_cm=wrist_cm, bmi=bmi_value, classification=classification,
-        result=result, photo_front=front_path, photo_left=left_path, photo_right=right_path
+        result=result,
+        photo_front=f"{folder_rel}/{front_name}".replace("\\","/"),
+        photo_left=f"{folder_rel}/{left_name}".replace("\\","/"),
+        photo_right=f"{folder_rel}/{right_name}".replace("\\","/"),
     )
     db.add(record)
     db.commit()
     db.refresh(record)
+
+    # save photos after record exists
+    with open(front_path_abs,'wb') as f:
+        f.write(await photo_front.read())
+    with open(left_path_abs,'wb') as f:
+        f.write(await photo_left.read())
+    with open(right_path_abs,'wb') as f:
+        f.write(await photo_right.read())
 
     return record
 

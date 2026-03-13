@@ -3,7 +3,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import SessionLocal, init_db
-from ..utils import ensure_upload_folders, personnel_folder_name
+from ..utils import ensure_upload_folders, personnel_folder_name, uploads_abs, uploads_rel
 import os
 from datetime import datetime
 
@@ -97,20 +97,21 @@ async def create_personnel(
     db.refresh(p)
 
     # save uploaded files into structured folder and record them
-    person_folder = os.path.join('uploads', 'form_201', personnel_folder_name(first_name, last_name))
-    os.makedirs(person_folder, exist_ok=True)
+    person_folder_abs = uploads_abs('form_201', personnel_folder_name(first_name, last_name))
+    person_folder_rel = uploads_rel('form_201', personnel_folder_name(first_name, last_name))
+    os.makedirs(person_folder_abs, exist_ok=True)
 
     async def save_single(file_obj: Optional[UploadFile], shortname: str):
         if not file_obj:
             return
         ext = os.path.splitext(file_obj.filename)[1] or '.pdf'
         dest_name = f"FORM201_{first_name}_{last_name}_{shortname}{ext}"
-        dest_path = os.path.join(person_folder, dest_name)
+        dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
         content = await file_obj.read()
-        with open(dest_path, 'wb') as out:
+        with open(dest_path_abs, 'wb') as out:
             out.write(content)
-        norm_path = dest_path.replace('\\','/')
-        doc = models.Document(personnel_id=p.id, doc_type=shortname, file_path=norm_path)
+        rel_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
+        doc = models.Document(personnel_id=p.id, doc_type=shortname, file_path=rel_path)
         db.add(doc)
 
     # map and save
@@ -136,11 +137,11 @@ async def create_personnel(
             safe_title = title.replace(" ", "_") if title else f"mandatory_{idx+1}"
             ext = os.path.splitext(f.filename)[1] or ".pdf"
             dest_name = f"FORM201_{first_name}_{last_name}_mandatory_{safe_title}{ext}"
-            dest_path = os.path.join(person_folder, dest_name)
+            dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             content = await f.read()
-            with open(dest_path, "wb") as out:
+            with open(dest_path_abs, "wb") as out:
                 out.write(content)
-            norm_path = dest_path.replace("\\", "/")
+            norm_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
             tc = models.TrainingCertificate(
                 personnel_id=p.id,
                 category="mandatory",
@@ -158,11 +159,11 @@ async def create_personnel(
             safe_title = title.replace(" ", "_") if title else f"specialized_{idx+1}"
             ext = os.path.splitext(f.filename)[1] or ".pdf"
             dest_name = f"FORM201_{first_name}_{last_name}_specialized_{safe_title}{ext}"
-            dest_path = os.path.join(person_folder, dest_name)
+            dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             content = await f.read()
-            with open(dest_path, "wb") as out:
+            with open(dest_path_abs, "wb") as out:
                 out.write(content)
-            norm_path = dest_path.replace("\\", "/")
+            norm_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
             tc = models.TrainingCertificate(
                 personnel_id=p.id,
                 category="specialized",
@@ -251,8 +252,9 @@ async def update_person(
     db.commit()
 
     # person folder
-    person_folder = os.path.join('uploads', 'form_201', personnel_folder_name(first_name, last_name))
-    os.makedirs(person_folder, exist_ok=True)
+    person_folder_abs = uploads_abs('form_201', personnel_folder_name(first_name, last_name))
+    person_folder_rel = uploads_rel('form_201', personnel_folder_name(first_name, last_name))
+    os.makedirs(person_folder_abs, exist_ok=True)
 
     # helper to replace or create document
     async def replace_single(file_obj: UploadFile, shortname: str):
@@ -260,11 +262,11 @@ async def update_person(
             return
         ext = os.path.splitext(file_obj.filename)[1] or '.pdf'
         dest_name = f"FORM201_{first_name}_{last_name}_{shortname}{ext}"
-        dest_path = os.path.join(person_folder, dest_name)
+        dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
         content = await file_obj.read()
-        with open(dest_path, 'wb') as out:
+        with open(dest_path_abs, 'wb') as out:
             out.write(content)
-        norm_path = dest_path.replace('\\','/')
+        norm_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
         # check existing doc
         doc = db.query(models.Document).filter(models.Document.personnel_id==person.id, models.Document.doc_type==shortname).first()
         if doc:
@@ -327,11 +329,11 @@ async def update_person(
             safe_title = title.replace(' ', '_') if title else f'mandatory_new_{idx+1}'
             ext = os.path.splitext(f.filename)[1] or '.pdf'
             dest_name = f"FORM201_{first_name}_{last_name}_mandatory_{safe_title}{ext}"
-            dest_path = os.path.join(person_folder, dest_name)
+            dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             content = await f.read()
-            with open(dest_path, 'wb') as out:
+            with open(dest_path_abs, 'wb') as out:
                 out.write(content)
-            norm_path = dest_path.replace('\\','/')
+            norm_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
             tc = models.TrainingCertificate(personnel_id=person.id, category='mandatory', title=title or safe_title, file_path=norm_path)
             db.add(tc)
 
@@ -343,11 +345,11 @@ async def update_person(
             safe_title = title.replace(' ', '_') if title else f'specialized_new_{idx+1}'
             ext = os.path.splitext(f.filename)[1] or '.pdf'
             dest_name = f"FORM201_{first_name}_{last_name}_specialized_{safe_title}{ext}"
-            dest_path = os.path.join(person_folder, dest_name)
+            dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             content = await f.read()
-            with open(dest_path, 'wb') as out:
+            with open(dest_path_abs, 'wb') as out:
                 out.write(content)
-            norm_path = dest_path.replace('\\','/')
+            norm_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
             tc = models.TrainingCertificate(personnel_id=person.id, category='specialized', title=title or safe_title, file_path=norm_path)
             db.add(tc)
 

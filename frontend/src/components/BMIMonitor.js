@@ -1,5 +1,6 @@
 import React, {useEffect, useState} from 'react';
-import axios from 'axios';
+import { api } from '../api';
+import { RANKS } from '../constants/ranks';
 
 function classificationClass(name){
   const key = (name || '').toLowerCase();
@@ -18,8 +19,14 @@ export default function BMIMonitor(){
   const [left, setLeft] = useState(null);
   const [right, setRight] = useState(null);
 
+  // filters
+  const [unitFilter, setUnitFilter] = useState('All Units');
+  const [monthFilter, setMonthFilter] = useState('All Months');
+  const [yearFilter, setYearFilter] = useState('All Years');
+  const [search, setSearch] = useState('');
+
   useEffect(()=>{ load(); },[])
-  function load(){ axios.get('http://localhost:8000/api/bmi/').then(r=>setRecords(r.data)).catch(()=>{}); }
+  function load(){ api.get('/api/bmi/').then(r=>setRecords(r.data)).catch(()=>{}); }
 
   function openNew(){
     setForm({rank:'', name:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: ''});
@@ -39,13 +46,51 @@ export default function BMIMonitor(){
     data.append('photo_left', left);
     data.append('photo_right', right);
     try{
-      await axios.post('http://localhost:8000/api/bmi/', data, { headers: {'Content-Type':'multipart/form-data'} });
+      await api.post('/api/bmi/', data, { headers: {'Content-Type':'multipart/form-data'} });
       setShowModal(false);
       load();
     }catch(err){
       alert('Error saving BMI record: '+ (err.response?.data?.detail || err.message));
     }
   }
+
+  const monthOptions = [
+    'All Months',
+    'January','February','March','April','May','June',
+    'July','August','September','October','November','December'
+  ];
+
+  const filteredRecords = records.filter(r => {
+    let ok = true;
+    if (unitFilter !== 'All Units') {
+      ok = ok && r.unit === unitFilter;
+    }
+    if (r.date_taken && (monthFilter !== 'All Months' || yearFilter !== 'All Years')) {
+      const d = new Date(r.date_taken);
+      const monthName = monthOptions[d.getMonth() + 1];
+      const yearVal = d.getFullYear().toString();
+      if (monthFilter !== 'All Months') {
+        ok = ok && monthName === monthFilter;
+      }
+      if (yearFilter !== 'All Years') {
+        ok = ok && yearVal === yearFilter;
+      }
+    } else {
+      if (monthFilter !== 'All Months' || yearFilter !== 'All Years') {
+        ok = false;
+      }
+    }
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      const haystack = [
+        r.rank || '',
+        r.name || '',
+        r.unit || '',
+      ].join(' ').toLowerCase();
+      ok = ok && haystack.includes(q);
+    }
+    return ok;
+  });
 
   return (
     <div>
@@ -68,9 +113,46 @@ export default function BMIMonitor(){
       <div className="card-section p-3">
         <div className="filter-bar">
           <div className="filter-controls">
-            <select className="form-select form-select-sm"><option>All Units</option></select>
-            <select className="form-select form-select-sm"><option>All Months</option></select>
-            <select className="form-select form-select-sm"><option>All Years</option></select>
+            <select
+              className="form-select form-select-sm"
+              value={unitFilter}
+              onChange={e => setUnitFilter(e.target.value)}
+            >
+              <option>All Units</option>
+              <option>RHQ</option>
+              <option>Cavite</option>
+              <option>Laguna</option>
+              <option>Batangas</option>
+              <option>Rizal</option>
+              <option>Quezon</option>
+            </select>
+            <select
+              className="form-select form-select-sm"
+              value={monthFilter}
+              onChange={e => setMonthFilter(e.target.value)}
+            >
+              {monthOptions.map(m => (
+                <option key={m}>{m}</option>
+              ))}
+            </select>
+            <select
+              className="form-select form-select-sm"
+              value={yearFilter}
+              onChange={e => setYearFilter(e.target.value)}
+            >
+              <option>All Years</option>
+              {[...new Set(records
+                .filter(r => r.date_taken)
+                .map(r => new Date(r.date_taken).getFullYear().toString()))]
+                .sort()
+                .map(y => <option key={y}>{y}</option>)}
+            </select>
+            <input
+              className="form-control form-control-sm"
+              placeholder="Search by rank, name, or unit"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
           </div>
           <div>
             <button className="btn btn-outline-secondary btn-sm me-2">
@@ -103,7 +185,7 @@ export default function BMIMonitor(){
                 </tr>
               </thead>
               <tbody>
-                {records.length === 0 && (
+                {filteredRecords.length === 0 && (
                   <tr>
                     <td colSpan={11}>
                       <div className="table-empty-state">
@@ -112,7 +194,7 @@ export default function BMIMonitor(){
                     </td>
                   </tr>
                 )}
-                {records.map(r=> (
+                {filteredRecords.map(r=> (
                   <tr key={r.id}>
                     <td>{r.rank}</td>
                     <td>{r.name}</td>
@@ -151,7 +233,19 @@ export default function BMIMonitor(){
               </div>
               <div className="modal-body">
                 <div className="row g-2">
-                  <div className="col-md-4"><label>Rank *</label><input className="form-control" value={form.rank} onChange={e=>setForm({...form,rank:e.target.value})} /></div>
+                  <div className="col-md-4">
+                    <label>Rank *</label>
+                    <select
+                      className="form-select"
+                      value={form.rank}
+                      onChange={e=>setForm({...form,rank:e.target.value})}
+                    >
+                      <option value="">Select rank</option>
+                      {RANKS.map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="col-md-4"><label>Name *</label><input className="form-control" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></div>
                   <div className="col-md-4"><label>Unit *</label><select className="form-select" value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})}><option>RHQ</option><option>Cavite</option><option>Laguna</option><option>Batangas</option><option>Rizal</option><option>Quezon</option></select></div>
                   <div className="col-md-3"><label>Age *</label><input type="number" className="form-control" value={form.age} onChange={e=>setForm({...form,age:e.target.value})} /></div>
