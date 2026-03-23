@@ -1,6 +1,8 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import os
+from pathlib import Path
 from .database import Base
 
 class Personnel(Base):
@@ -25,6 +27,30 @@ class Document(Base):
     doc_type = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
     personnel = relationship('Personnel', back_populates='documents')
+
+    @property
+    def file_name(self):
+        return os.path.basename(self.file_path or "") or None
+
+    @property
+    def file_type(self):
+        _, ext = os.path.splitext(self.file_path or "")
+        return ext.lstrip('.').upper() if ext else None
+
+    @property
+    def upload_date(self):
+        if not self.file_path:
+            return None
+        abs_path = Path(self.file_path)
+        if not abs_path.is_absolute():
+            abs_path = Path(__file__).resolve().parents[2] / self.file_path
+        if abs_path.exists():
+            return datetime.fromtimestamp(abs_path.stat().st_mtime)
+        return None
+
+    @property
+    def file_url(self):
+        return self.file_path
 
 class TrainingCertificate(Base):
     __tablename__ = 'training_certificates'

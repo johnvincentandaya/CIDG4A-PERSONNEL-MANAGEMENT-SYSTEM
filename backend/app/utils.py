@@ -24,13 +24,18 @@ def uploads_abs(*parts: str) -> Path:
 def ensure_upload_folders():
     uploads_abs("form_201").mkdir(parents=True, exist_ok=True)
     uploads_abs("bmi").mkdir(parents=True, exist_ok=True)
+    # create unit folders for known units to ensure structure
+    units = ['RHQ','CAVITE','LAGUNA','BATANGAS','RIZAL','QUEZON']
+    for u in units:
+        uploads_abs('form_201', u).mkdir(parents=True, exist_ok=True)
+        uploads_abs('bmi', u).mkdir(parents=True, exist_ok=True)
 
 def personnel_folder_name(first_name: str, last_name: str) -> str:
-    name = f"{first_name}_{last_name}".replace(' ', '_')
+    name = f"{last_name}_{first_name}".replace(' ', '_')
     return f"FORM201_{name}"
 
 def bmi_folder_name(first_name: str, last_name: str) -> str:
-    name = f"{first_name}_{last_name}".replace(' ', '_')
+    name = f"{last_name}_{first_name}".replace(' ', '_')
     return f"BMI_{name}"
 
 def save_upload_file(uploaded, dest_path: str) -> str:

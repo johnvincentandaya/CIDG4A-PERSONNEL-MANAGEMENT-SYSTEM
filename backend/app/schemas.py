@@ -6,6 +6,10 @@ class DocumentSchema(BaseModel):
     id: int
     doc_type: str
     file_path: str
+    file_name: Optional[str] = None
+    file_type: Optional[str] = None
+    upload_date: Optional[datetime] = None
+    file_url: Optional[str] = None
     class Config:
         orm_mode = True
 

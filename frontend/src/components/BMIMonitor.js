@@ -24,6 +24,13 @@ export default function BMIMonitor(){
   const [monthFilter, setMonthFilter] = useState('All Months');
   const [yearFilter, setYearFilter] = useState('All Years');
   const [search, setSearch] = useState('');
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportMonth, setReportMonth] = useState('');
+  const [reportYear, setReportYear] = useState('');
+  const [preparedBy, setPreparedBy] = useState('');
+  const [notedBy, setNotedBy] = useState('');
+  const [reportType, setReportType] = useState('pdf');
+  const [reportFileName, setReportFileName] = useState('bmi_report');
 
   useEffect(()=>{ load(); },[])
   function load(){ api.get('/api/bmi/').then(r=>setRecords(r.data)).catch(()=>{}); }
@@ -32,6 +39,31 @@ export default function BMIMonitor(){
     setForm({rank:'', name:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: ''});
     setFront(null); setLeft(null); setRight(null);
     setShowModal(true);
+  }
+
+  async function downloadSingleResult(record){
+    const suggested = `BMI_RESULT_${(record?.name || 'personnel').replace(/\s+/g, '_')}`;
+    const fileName = window.prompt('Enter file name for BMI result PDF', suggested);
+    if (!fileName || !fileName.trim()) {
+      alert('File name is required before generating the BMI result PDF.');
+      return;
+    }
+
+    try {
+      const res = await api.get(`/api/bmi/${record.id}/pdf`, {
+        params: { file_name: fileName.trim() },
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${fileName.trim()}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      alert('Error generating BMI result PDF.');
+    }
   }
 
   function valid(){
@@ -155,7 +187,7 @@ export default function BMIMonitor(){
             />
           </div>
           <div>
-            <button className="btn btn-outline-secondary btn-sm me-2">
+            <button className="btn btn-outline-secondary btn-sm me-2" onClick={()=>setShowReportModal(true)}>
               <i className="bi bi-file-earmark-text me-1" />
               Generate Report
             </button>
@@ -211,8 +243,8 @@ export default function BMIMonitor(){
                     </td>
                     <td>{r.date_taken ? new Date(r.date_taken).toLocaleDateString(): ''}</td>
                     <td>
-                      <button className="btn btn-sm btn-outline-primary">
-                        <i className="bi bi-pencil-square" />
+                      <button className="btn btn-sm btn-outline-primary" onClick={()=>downloadSingleResult(r)} title="Generate BMI Result PDF">
+                        <i className="bi bi-file-earmark-pdf" />
                       </button>
                     </td>
                   </tr>
@@ -266,6 +298,82 @@ export default function BMIMonitor(){
               <div className="modal-footer">
                 <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>Cancel</button>
                 <button className="btn btn-primary" onClick={submit} disabled={!valid()}>Save Record</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {showReportModal && (
+        <div className="modal d-block" tabIndex={-1}>
+          <div className="modal-dialog modal-sm">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Generate BMI Report</h5>
+                <button className="btn-close" onClick={()=>setShowReportModal(false)}></button>
+              </div>
+              <div className="modal-body">
+                <div className="mb-2">
+                  <label>Month</label>
+                  <select className="form-select" value={reportMonth} onChange={e=>setReportMonth(e.target.value)}>
+                    <option value="">All Months</option>
+                    {monthOptions.slice(1).map((m,i)=> <option key={m} value={i+1}>{m}</option>)}
+                  </select>
+                </div>
+                <div className="mb-2">
+                  <label>Year</label>
+                  <select className="form-select" value={reportYear} onChange={e=>setReportYear(e.target.value)}>
+                    <option value="">All Years</option>
+                    {[...new Set(records.filter(r=>r.date_taken).map(r=> new Date(r.date_taken).getFullYear()))].sort().map(y=> <option key={y} value={y}>{y}</option>)}
+                  </select>
+                </div>
+                <div className="mb-2">
+                  <label>Prepared By</label>
+                  <input className="form-control" value={preparedBy} onChange={e=>setPreparedBy(e.target.value)} />
+                </div>
+                <div className="mb-2">
+                  <label>Noted By</label>
+                  <input className="form-control" value={notedBy} onChange={e=>setNotedBy(e.target.value)} />
+                </div>
+                <div className="mb-2">
+                  <label>Report Type</label>
+                  <select className="form-select" value={reportType} onChange={e=>setReportType(e.target.value)}>
+                    <option value="pdf">PDF</option>
+                    <option value="excel">Excel</option>
+                  </select>
+                </div>
+                <div className="mb-2">
+                  <label>File Name *</label>
+                  <input
+                    className="form-control"
+                    value={reportFileName}
+                    onChange={e=>setReportFileName(e.target.value)}
+                    placeholder="e.g. bmi_report_march_2026"
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={()=>setShowReportModal(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={async ()=>{
+                  try{
+                    if (!reportFileName.trim()) {
+                      alert('File name is required before generating the report.');
+                      return;
+                    }
+                    const fd = new FormData();
+                    if (reportMonth) fd.append('month', reportMonth);
+                    if (reportYear) fd.append('year', reportYear);
+                    if (unitFilter && unitFilter!=='All Units') fd.append('unit', unitFilter);
+                    fd.append('prepared_by', preparedBy);
+                    fd.append('noted_by', notedBy);
+                    fd.append('report_type', reportType);
+                    fd.append('file_name', reportFileName.trim());
+                    const res = await api.post('/api/bmi/report', fd, { responseType: 'blob' });
+                    const ext = reportType === 'excel' ? 'xlsx' : 'pdf';
+                    const url = window.URL.createObjectURL(new Blob([res.data]));
+                    const a = document.createElement('a'); a.href = url; a.download = `${reportFileName.trim()}.${ext}`; document.body.appendChild(a); a.click(); a.remove();
+                    setShowReportModal(false);
+                  }catch(err){ alert('Error generating BMI report'); }
+                }} disabled={!reportFileName.trim()}>Generate</button>
               </div>
             </div>
           </div>

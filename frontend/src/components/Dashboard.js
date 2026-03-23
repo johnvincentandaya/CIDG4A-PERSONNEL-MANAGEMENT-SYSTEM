@@ -21,7 +21,7 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="page-header">
+      <div className="page-header"> 
         <div className="page-title-block">
           <div className="page-eyebrow">CIDG RFU4A</div>
           <h1 className="page-title">Personnel Management Overview</h1>
