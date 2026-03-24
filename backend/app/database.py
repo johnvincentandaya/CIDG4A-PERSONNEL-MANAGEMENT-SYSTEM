@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 
@@ -27,3 +27,52 @@ def init_db():
     from . import models
 
     Base.metadata.create_all(bind=engine)
+
+
+def migrate_db():
+    """Add missing columns to existing tables for migration."""
+    with engine.connect() as conn:
+        # Check if bmi_records table exists and add missing columns
+        try:
+            # Add created_at column to bmi_records if it doesn't exist
+            conn.execute(text("""
+                ALTER TABLE bmi_records ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            """))
+            conn.commit()
+        except Exception:
+            pass  # Column might already exist
+        
+        try:
+            # Add updated_at column to bmi_records if it doesn't exist
+            conn.execute(text("""
+                ALTER TABLE bmi_records ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            """))
+            conn.commit()
+        except Exception:
+            pass  # Column might already exist
+        
+        try:
+            # Add personnel_id column to bmi_records if it doesn't exist
+            conn.execute(text("""
+                ALTER TABLE bmi_records ADD COLUMN personnel_id INTEGER REFERENCES personnel(id)
+            """))
+            conn.commit()
+        except Exception:
+            pass  # Column might already exist
+        
+        # Ensure indexes exist for performance
+        try:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_bmi_personnel_id ON bmi_records(personnel_id)
+            """))
+            conn.commit()
+        except Exception:
+            pass
+        
+        try:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_bmi_date_taken ON bmi_records(date_taken)
+            """))
+            conn.commit()
+        except Exception:
+            pass

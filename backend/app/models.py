@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, Text, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import os
@@ -64,7 +64,7 @@ class TrainingCertificate(Base):
 class BMIRecord(Base):
     __tablename__ = 'bmi_records'
     id = Column(Integer, primary_key=True, index=True)
-    personnel_id = Column(Integer, ForeignKey('personnel.id'))
+    personnel_id = Column(Integer, ForeignKey('personnel.id'), nullable=True, index=True)
     rank = Column(String)
     name = Column(String)
     unit = Column(String)
@@ -75,13 +75,14 @@ class BMIRecord(Base):
     waist_cm = Column(Float)
     hip_cm = Column(Float)
     wrist_cm = Column(Float)
-    date_taken = Column(DateTime, default=datetime.utcnow)
+    date_taken = Column(DateTime, default=datetime.utcnow, index=True)
     bmi = Column(Float)
     classification = Column(String)
     result = Column(String)
     photo_front = Column(String)
     photo_left = Column(String)
     photo_right = Column(String)
+    is_latest = Column(Boolean, default=True, index=True)  # Flag to identify latest/current BMI record
     monthly_weights = relationship('MonthlyWeight', back_populates='bmi_record', cascade='all, delete')
     personnel = relationship('Personnel', back_populates='bmi_records')
 

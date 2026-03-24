@@ -60,6 +60,7 @@ class BMICreate(BaseModel):
 
 class BMISchema(BaseModel):
     id: int
+    personnel_id: Optional[int] = None
     rank: str
     name: str
     unit: str
@@ -77,5 +78,26 @@ class BMISchema(BaseModel):
     photo_front: Optional[str]
     photo_left: Optional[str]
     photo_right: Optional[str]
+    is_latest: Optional[bool] = True
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+
+class BMIHistorySchema(BaseModel):
+    """Schema for BMI history response with personnel info"""
+    personnel_id: Optional[int] = None
+    personnel_name: Optional[str] = None
+    personnel_rank: Optional[str] = None
+    personnel_unit: Optional[str] = None
+    latest_bmi: Optional[BMISchema] = None
+    history: List[BMISchema] = []
+
+
+class BMITimelineSchema(BaseModel):
+    """Schema for BMI timeline data for charts"""
+    date_taken: Optional[datetime]
+    bmi: Optional[float]
+    classification: Optional[str]
+    weight_kg: Optional[float]
+    class Config:
+        from_attributes = True

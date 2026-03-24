@@ -18,6 +18,118 @@ from openpyxl import Workbook
 
 router = APIRouter()
 
+# Run migrations on module load
+def run_migrations():
+    """Add missing columns to existing tables for migration."""
+    from sqlalchemy import create_engine, text
+    from pathlib import Path
+    import os
+    
+    # Get the database path
+    base_dir = Path(__file__).resolve().parent.parent.parent  # api -> app -> backend
+    db_path = base_dir / "cidg_dev.db"
+    
+    if not db_path.exists():
+        return
+    
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    
+    with engine.connect() as conn:
+        # Check if bmi_records table exists and add missing columns
+        try:
+            conn.execute(text("""
+                ALTER TABLE bmi_records ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            """))
+            conn.commit()
+        except Exception:
+            pass  # Column might already exist
+        
+        try:
+            conn.execute(text("""
+                ALTER TABLE bmi_records ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            """))
+            conn.commit()
+        except Exception:
+            pass  # Column might already exist
+        
+        try:
+            conn.execute(text("""
+                ALTER TABLE bmi_records ADD COLUMN personnel_id INTEGER REFERENCES personnel(id)
+            """))
+            conn.commit()
+        except Exception:
+            pass  # Column might already exist
+        
+        # NEW: Add is_latest column for tracking latest BMI record per personnel
+        try:
+            conn.execute(text("""
+                ALTER TABLE bmi_records ADD COLUMN is_latest BOOLEAN DEFAULT 1
+            """))
+            conn.commit()
+        except Exception:
+            pass  # Column might already exist
+        
+        # Ensure indexes exist for performance
+        try:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_bmi_personnel_id ON bmi_records(personnel_id)
+            """))
+            conn.commit()
+        except Exception:
+            pass
+        
+        try:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_bmi_date_taken ON bmi_records(date_taken)
+            """))
+            conn.commit()
+        except Exception:
+            pass
+        
+        # NEW: Create index for is_latest flag
+        try:
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_bmi_is_latest ON bmi_records(is_latest)
+            """))
+            conn.commit()
+        except Exception:
+            pass
+        
+        # NEW: Initialize is_latest for existing records
+        # For each unique name, mark only the latest record (by date_taken) as is_latest=True
+        # and all others as is_latest=False
+        try:
+            # First, set all to False
+            conn.execute(text("""
+                UPDATE bmi_records SET is_latest = 0
+            """))
+            conn.commit()
+            
+            # Then, for each unique name, set the record with max date_taken to True
+            # This subquery finds the max date per name
+            conn.execute(text("""
+                UPDATE bmi_records 
+                SET is_latest = 1 
+                WHERE id IN (
+                    SELECT id FROM bmi_records b1
+                    WHERE date_taken = (
+                        SELECT MAX(date_taken) FROM bmi_records b2 
+                        WHERE b2.name = b1.name
+                    )
+                )
+            """))
+            conn.commit()
+        except Exception as e:
+            print(f"Warning: Could not initialize is_latest: {e}")
+            pass
+    
+    engine.dispose()
+
+try:
+    run_migrations()
+except Exception:
+    pass  # Migration errors are handled gracefully
+
 PNP_BMI_AGE_TABLE = [
     {"group": "29 years old and below", "min_age": 0, "max_age": 29, "acceptable_min": 18.5, "acceptable_max": 24.9},
     {"group": "30-34 years old", "min_age": 30, "max_age": 34, "acceptable_min": 19.0, "acceptable_max": 25.4},
@@ -209,6 +321,13 @@ def load_monthly_weight_map(db: Session, rec: models.BMIRecord) -> Dict[Tuple[in
     return weights
 
 
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import Table, TableStyle, Paragraph, Image as RLImage, Spacer
+from reportlab.lib.units import inch
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+
 def draw_record_pdf_page(
     c: canvas.Canvas,
     rec: models.BMIRecord,
@@ -216,151 +335,264 @@ def draw_record_pdf_page(
     prepared_by: str = "",
     noted_by: str = "",
 ) -> None:
+    """
+    Draw Individual BMI Monitoring Form - STRICT FIXED LAYOUT
+    Uses canvas drawing with EXACT coordinates to ensure ONE page only.
+    """
+    # Landscape letter: 792 x 612 points
     width, height = landscape(letter)
-
+    
+    # FIXED MARGINS
+    M = 18  # All margins
+    content_w = width - 2 * M  # 756
+    
+    # FIXED SECTION HEIGHTS (carefully calculated to fit on one page)
+    TITLE_H = 18
+    PHOTOS_H = 65
+    PHOTO_LABEL_H = 10
+    PHOTO_BLOCK_H = PHOTOS_H + PHOTO_LABEL_H  # 75
+    
+    DETAILS_ROW_H = 14
+    DETAILS_HEADER_H = 12
+    DETAILS_DATA_ROWS = 10
+    DETAILS_TOTAL_H = DETAILS_HEADER_H + (DETAILS_ROW_H * DETAILS_DATA_ROWS)  # 152
+    
+    UPPER_SECTION_H = max(PHOTO_BLOCK_H, DETAILS_TOTAL_H)  # 152
+    
+    BMI_RESULT_H = 24
+    
+    MIDDLE_SECTION_H = 45
+    
+    MONTHLY_TITLE_H = 12
+    MONTHLY_ROW_H = 13
+    MONTHLY_TOTAL_H = MONTHLY_TITLE_H + (MONTHLY_ROW_H * 3)  # 51
+    
+    FOOTER_H = 20
+    
+    # Calculate total height to verify it fits
+    # Title + gap + Upper section + gap + BMI result + gap + Middle + gap + Monthly + gap + Footer
+    # 18 + 5 + 152 + 5 + 24 + 5 + 45 + 5 + 51 + 5 + 20 = 335
+    # Page height = 612, we have 612 - 2*18 = 576 usable
+    # Should fit easily
+    
+    # Calculate Y positions (from top)
+    y = height - M  # Start at top margin
+    
     bmi_value = compute_bmi(rec.weight_kg or 0, rec.height_cm or 0)
     pnp_classification = classify_pnp_bmi(bmi_value, rec.age or 0)
     who_classification = classify_who_bmi(bmi_value)
     metrics = compute_weight_metrics(rec.height_cm or 0, rec.weight_kg or 0, rec.age or 0)
     intervention = INTERVENTION_PACKAGE_MAP.get(pnp_classification, {"package": "", "duration": "", "recommendation": ""})
-
-    c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(width / 2, height - 30, "INDIVIDUAL BMI MONITORING FORM")
-
-    left_x = 28
-    top_y = height - 60
-    image_w = 190
-    image_h = 120
-    image_gap = 14
-
+    
+    # ========== TITLE ==========
+    y -= TITLE_H
+    c.setFont("Helvetica-Bold", 11)
+    c.drawCentredString(width / 2, y, "INDIVIDUAL BMI MONITORING FORM")
+    
+    y -= 8  # Gap
+    
+    # ========== UPPER SECTION ==========
+    # Photos: LEFT side (40% width)
+    photo_section_w = content_w * 0.40
+    # Details: RIGHT side (60% width)
+    details_section_w = content_w * 0.60
+    details_x = M + photo_section_w + 5
+    details_w = details_section_w - 5
+    
+    photo_w = photo_section_w / 3 - 2
+    
+    # --- PHOTOS ---
+    photo_start_y = y
+    
     image_specs = [
         ("Right View", resolve_upload_path(rec.photo_right)),
         ("Front View", resolve_upload_path(rec.photo_front)),
         ("Left View", resolve_upload_path(rec.photo_left)),
     ]
-
-    for idx, (label, image_path) in enumerate(image_specs):
-        img_y = top_y - ((image_h + 26) * idx)
-        c.setStrokeColor(colors.grey)
-        c.rect(left_x, img_y - image_h, image_w, image_h, stroke=1, fill=0)
+    
+    for i, (label, image_path) in enumerate(image_specs):
+        x = M + i * (photo_w + 2)
+        
+        # Draw border
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(0.5)
+        c.rect(x, y - PHOTOS_H, photo_w, PHOTOS_H, stroke=1, fill=0)
+        
+        # Draw image
         if image_path and os.path.exists(image_path):
             try:
-                c.drawImage(image_path, left_x + 2, img_y - image_h + 2, width=image_w - 4, height=image_h - 4, preserveAspectRatio=True, anchor="c")
+                c.drawImage(image_path, x + 1, y - PHOTOS_H + 1,
+                           width=photo_w - 2, height=PHOTOS_H - 2,
+                           preserveAspectRatio=True, anchor='c')
             except Exception:
                 pass
-        c.setFont("Helvetica", 9)
-        c.drawCentredString(left_x + (image_w / 2), img_y - image_h - 12, label)
-
-    details_x = left_x + image_w + 28
-    details_right = width - 24
-    details_top = height - 60
-    row_h = 20
-
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(details_x, details_top + 8, "PERSONNEL DETAILS")
-
-    details = [
-        ("Rank / Name", f"{rec.rank or ''} {rec.name or ''}".strip()),
-        ("Unit", rec.unit or ""),
-        ("Age", str(rec.age or "")),
-        ("Height", f"{(rec.height_cm or 0):.2f} cm" if rec.height_cm is not None else ""),
-        ("Weight", f"{(rec.weight_kg or 0):.2f} kg" if rec.weight_kg is not None else ""),
-        ("Waist", f"{(rec.waist_cm or 0):.2f} cm" if rec.waist_cm is not None else ""),
-        ("Hip", f"{(rec.hip_cm or 0):.2f} cm" if rec.hip_cm is not None else ""),
-        ("Wrist", f"{(rec.wrist_cm or 0):.2f} cm" if rec.wrist_cm is not None else ""),
-        ("Gender", rec.sex or ""),
-        ("Date Taken", rec.date_taken.strftime("%Y-%m-%d") if rec.date_taken else ""),
-        ("Age Group", metrics["age_group"]),
-        ("BMI Result", f"{bmi_value:.2f}"),
-        (
-            "Normal Weight Range",
-            f"{metrics['normal_min_weight']:.2f} kg - {metrics['normal_max_weight']:.2f} kg",
-        ),
-        (
-            "Acceptable Weight Range",
-            f"{metrics['acceptable_min_weight']:.2f} kg - {metrics['acceptable_max_weight']:.2f} kg",
-        ),
-        ("Weight to Lose", f"{metrics['weight_to_lose']:.2f} kg"),
+        
+        # Draw label
+        c.setFont("Helvetica", 6)
+        c.drawCentredString(x + photo_w/2, y - PHOTOS_H - PHOTO_LABEL_H + 3, label)
+    
+    y -= PHOTO_BLOCK_H  # Move down past photos
+    
+    # --- PERSONNEL DETAILS ---
+    details_y = y  # Start from same level as photos
+    
+    # Details header
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(details_x, details_y, "PERSONNEL DETAILS")
+    details_y -= DETAILS_ROW_H
+    
+    # Details rows
+    details_data = [
+        ("RANK/NAME", f"{rec.rank or ''} {rec.name or ''}".strip()),
+        ("UNIT", rec.unit or ""),
+        ("AGE", str(rec.age or "")),
+        ("HEIGHT", f"{(rec.height_cm or 0):.1f} cm"),
+        ("WEIGHT", f"{(rec.weight_kg or 0):.1f} kg"),
+        ("WAIST", f"{(rec.waist_cm or 0):.1f} cm"),
+        ("HIP", f"{(rec.hip_cm or 0):.1f} cm"),
+        ("WRIST", f"{(rec.wrist_cm or 0):.1f} cm"),
+        ("GENDER", rec.sex or ""),
+        ("DATE TAKEN", rec.date_taken.strftime("%Y-%m-%d") if rec.date_taken else ""),
     ]
-
-    label_w = 170
-    value_w = (details_right - details_x) - label_w
-    current_y = details_top
-    c.setFont("Helvetica", 9)
-    for key, value in details:
-        c.setStrokeColor(colors.lightgrey)
-        c.rect(details_x, current_y - row_h, label_w, row_h, stroke=1, fill=0)
-        c.rect(details_x + label_w, current_y - row_h, value_w, row_h, stroke=1, fill=0)
-        c.drawString(details_x + 5, current_y - 14, key)
-        c.drawString(details_x + label_w + 5, current_y - 14, str(value))
-        current_y -= row_h
-
-    section_y = current_y - 18
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(details_x, section_y, "BMI CLASSIFICATION")
-    section_y -= 18
-    c.setFont("Helvetica", 9)
-    c.drawString(details_x, section_y, "PNP BMI Acceptable Standard:")
-    c.drawString(details_x + 180, section_y, pnp_classification)
-    section_y -= 14
-    c.drawString(details_x, section_y, "WHO Standard:")
-    c.drawString(details_x + 180, section_y, who_classification)
-
-    section_y -= 22
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(details_x, section_y, "INTERVENTION")
-    section_y -= 18
-    c.setFont("Helvetica", 9)
-    c.drawString(details_x, section_y, f"Intervention Package: {intervention['package']}")
-    section_y -= 14
-    c.drawString(details_x, section_y, f"Duration: {intervention['duration']}")
-    section_y -= 14
-    c.drawString(details_x, section_y, f"Recommendation: {intervention['recommendation']}")
-
-    table_x = 28
-    table_y = 140
-    table_w = width - 56
-    col_w = table_w / TOTAL_MONTH_COLUMNS
-
+    
+    label_w = details_w * 0.40
+    
+    c.setFont("Helvetica", 6)
+    for label, value in details_data:
+        # Draw row
+        c.setStrokeColor(colors.black)
+        c.rect(details_x, details_y, details_w, DETAILS_ROW_H, stroke=1, fill=0)
+        
+        # Draw vertical separator
+        c.line(details_x + label_w, details_y, details_x + label_w, details_y + DETAILS_ROW_H)
+        
+        # Draw text
+        c.setFont("Helvetica-Bold", 6)
+        c.drawString(details_x + 2, details_y + 4, label)
+        c.setFont("Helvetica", 6)
+        c.drawString(details_x + label_w + 2, details_y + 4, value)
+        
+        details_y -= DETAILS_ROW_H
+    
+    # Move y to below whichever is taller (photos or details)
+    y = min(y, details_y) - 5  # 5pt gap
+    
+    # ========== BMI RESULT BOX ==========
+    y -= BMI_RESULT_H
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(1)
+    c.rect(M, y, content_w, BMI_RESULT_H, stroke=1, fill=0)
+    
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(M + 5, y + 8, "BMI RESULT:")
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(M + 70, y + 5, f"{bmi_value:.2f}")
+    
+    c.setFont("Helvetica", 6)
+    c.drawString(M + 150, y + 15, f"Normal Weight Range: {metrics['normal_min_weight']:.1f} - {metrics['normal_max_weight']:.1f} kg")
+    c.drawString(M + 150, y + 5, f"Weight to Lose: {metrics['weight_to_lose']:.1f} kg")
+    
+    y -= 5  # Gap
+    
+    # ========== MIDDLE SECTION: CLASSIFICATION + INTERVENTION ==========
+    y -= MIDDLE_SECTION_H
+    
+    class_w = content_w * 0.40
+    interv_w = content_w * 0.60
+    interv_x = M + class_w + 5
+    
+    # BMI Classification box
+    c.setStrokeColor(colors.black)
+    c.rect(M, y, class_w, MIDDLE_SECTION_H, stroke=1, fill=0)
+    
+    c.setFont("Helvetica-Bold", 7)
+    c.drawCentredString(M + class_w/2, y + MIDDLE_SECTION_H - 10, "BMI CLASSIFICATION")
+    
+    c.setFont("Helvetica", 6)
+    c.drawString(M + 5, y + MIDDLE_SECTION_H - 22, "PNP BMI Acceptable Standard:")
+    c.setFont("Helvetica-Bold", 8)
+    c.drawCentredString(M + class_w/2, y + MIDDLE_SECTION_H - 32, pnp_classification)
+    
+    c.setFont("Helvetica", 6)
+    c.drawString(M + 5, y + MIDDLE_SECTION_H - 42, "WHO Standard:")
+    c.setFont("Helvetica-Bold", 7)
+    c.drawCentredString(M + class_w/2, y + MIDDLE_SECTION_H - 52, who_classification)
+    
+    # Intervention box
+    c.setStrokeColor(colors.black)
+    c.rect(interv_x, y, interv_w, MIDDLE_SECTION_H, stroke=1, fill=0)
+    
+    c.setFont("Helvetica-Bold", 7)
+    c.drawCentredString(interv_x + interv_w/2, y + MIDDLE_SECTION_H - 10, "INTERVENTION PACKAGE")
+    
+    c.setFont("Helvetica", 6)
+    c.drawString(interv_x + 5, y + MIDDLE_SECTION_H - 22, f"Package: {intervention['package']}")
+    c.drawString(interv_x + 5, y + MIDDLE_SECTION_H - 32, f"Duration: {intervention['duration']}")
+    c.drawString(interv_x + 5, y + MIDDLE_SECTION_H - 42, f"Recommendation: {intervention['recommendation']}")
+    
+    y -= 5  # Gap
+    
+    # ========== MONTHLY WEIGHT MONITORING TABLE ==========
+    y -= MONTHLY_TOTAL_H
+    
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(M, y + MONTHLY_TOTAL_H - 10, "MONTHLY WEIGHT MONITORING")
+    
+    table_x = M
+    table_w = content_w
+    col_w = (table_w - 35) / TOTAL_MONTH_COLUMNS  # Row labels take 35 pts
+    
     months = build_month_columns(rec.date_taken or datetime.utcnow())
     monthly_weight_map = load_monthly_weight_map(db, rec)
-
-    c.setFont("Helvetica-Bold", 10)
-    c.drawString(table_x, table_y + 52, "MONTHLY WEIGHT MONITORING")
-    c.setFont("Helvetica-Bold", 8)
-
-    for idx, (year, month) in enumerate(months):
-        x = table_x + (idx * col_w)
-        c.setStrokeColor(colors.black)
-        c.rect(x, table_y + 30, col_w, 18, stroke=1, fill=0)
-        c.rect(x, table_y + 12, col_w, 18, stroke=1, fill=0)
-        c.rect(x, table_y - 6, col_w, 18, stroke=1, fill=0)
-        c.drawCentredString(x + col_w / 2, table_y + 35, str(year))
-        c.drawCentredString(x + col_w / 2, table_y + 17, calendar.month_abbr[month])
-        weight_value = monthly_weight_map.get((year, month), "")
-        c.setFont("Helvetica", 8)
-        if weight_value in ("", None):
-            display_weight = ""
-        else:
-            display_weight = f"{weight_value:.2f}"
-        c.drawCentredString(x + col_w / 2, table_y - 1, display_weight)
-        c.setFont("Helvetica-Bold", 8)
-
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(table_x - 22, table_y + 35, "Year")
-    c.drawString(table_x - 26, table_y + 17, "Month")
-    c.drawString(table_x - 28, table_y - 1, "Weight")
-
-    signature_y = 72
-    c.setFont("Helvetica", 9)
-    c.drawString(34, signature_y, "Certified Correct:")
-    c.line(124, signature_y, 320, signature_y)
-    c.drawString(130, signature_y - 12, "Name / Signature")
-
+    
+    row_labels = ["YEAR", "MONTH", "WEIGHT"]
+    row_data = [[], [], []]
+    
+    for year, month in months:
+        row_data[0].append(str(year))
+        row_data[1].append(calendar.month_abbr[month])
+        weight = monthly_weight_map.get((year, month), "")
+        row_data[2].append(f"{weight:.1f}" if weight not in ("", None) else "-")
+    
+    # Draw table
+    row_y = [y + MONTHLY_TOTAL_H - MONTHLY_TITLE_H - MONTHLY_ROW_H,
+             y + MONTHLY_TOTAL_H - MONTHLY_TITLE_H - MONTHLY_ROW_H * 2,
+             y + MONTHLY_TOTAL_H - MONTHLY_TITLE_H - MONTHLY_ROW_H * 3]
+    
+    for row_idx, (row_label, values) in enumerate(zip(row_labels, row_data)):
+        # Row label
+        c.setFont("Helvetica-Bold", 5)
+        c.drawString(table_x - 28, row_y[row_idx] + 4, row_label)
+        
+        for col_idx, value in enumerate(values):
+            x = table_x + col_idx * col_w
+            
+            # Draw cell
+            c.setStrokeColor(colors.black)
+            c.rect(x, row_y[row_idx], col_w, MONTHLY_ROW_H, stroke=1, fill=0)
+            
+            # Draw value
+            c.setFont("Helvetica", 5)
+            c.drawCentredString(x + col_w/2, row_y[row_idx] + 4, str(value))
+    
+    y -= 5  # Gap before footer
+    
+    # ========== FOOTER ==========
+    sig_y = M + 10
+    sig_line_w = 120
+    
+    c.setFont("Helvetica-Bold", 6)
+    c.drawString(M, sig_y, "Certified Correct:")
+    c.line(M + 55, sig_y, M + 55 + sig_line_w, sig_y)
+    c.setFont("Helvetica", 5)
+    c.drawCentredString(M + 55 + sig_line_w/2, sig_y - 6, "Signature over Printed Name")
+    
     if prepared_by:
-        c.drawString(360, signature_y, f"Prepared by: {prepared_by}")
+        c.setFont("Helvetica-Bold", 6)
+        c.drawRightString(width - M, sig_y, f"Prepared by: {prepared_by}")
     if noted_by:
-        c.drawString(360, signature_y - 14, f"Noted by: {noted_by}")
+        c.setFont("Helvetica-Bold", 6)
+        c.drawRightString(width - M, sig_y - 8, f"Noted by: {noted_by}")
 
 
 @router.post('/', response_model=schemas.BMISchema)
@@ -402,6 +634,16 @@ async def create_bmi(
     bmi_value = compute_bmi(weight_kg, height_cm)
     pnp_classification = classify_pnp_bmi(bmi_value, age)
     parsed_date_taken = parse_date_taken(date_taken)
+    
+    # NEW: Find and mark existing latest records for this personnel as NOT latest
+    # First try to find by name (case-insensitive match)
+    existing_latest = db.query(models.BMIRecord).filter(
+        models.BMIRecord.name.ilike(name)
+    ).order_by(models.BMIRecord.date_taken.desc()).first()
+    
+    if existing_latest:
+        existing_latest.is_latest = False
+        db.commit()
 
     record = models.BMIRecord(
         rank=rank, name=name, unit=unit, age=age, sex=sex,
@@ -412,6 +654,7 @@ async def create_bmi(
         photo_front=f"{folder_rel}/{front_name}".replace("\\","/"),
         photo_left=f"{folder_rel}/{left_name}".replace("\\","/"),
         photo_right=f"{folder_rel}/{right_name}".replace("\\","/"),
+        is_latest=True,  # NEW: Mark as latest
     )
     db.add(record)
     db.commit()
@@ -469,11 +712,6 @@ def bmi_report(
         media_type='application/pdf',
         headers={"Content-Disposition": f"attachment;filename={safe_base_name}.pdf"},
     )
-
-
-@router.get('/', response_model=List[schemas.BMISchema])
-def list_bmi(db: Session = Depends(get_db)):
-    return db.query(models.BMIRecord).order_by(models.BMIRecord.date_taken.desc()).all()
 
 
 @router.get('/{record_id}/pdf')
@@ -568,3 +806,549 @@ def generate_excel(
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         headers={"Content-Disposition": f"attachment;filename={safe_base_name}.xlsx"},
     )
+
+
+# ==================== BMI LIST AND HISTORY ENDPOINTS ====================
+
+@router.get('/', response_model=List[schemas.BMISchema])
+def list_bmi(
+    personnel_id: Optional[int] = None,
+    unit: Optional[str] = None,
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    exact_date: Optional[str] = None,
+    search: Optional[str] = None,
+    latest_only: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    List BMI records with optional filtering.
+    
+    Query params:
+    - personnel_id: Filter by personnel ID
+    - unit: Filter by unit (RHQ, Cavite, etc.)
+    - month: Filter by month (1-12)
+    - year: Filter by year
+    - exact_date: Filter by exact date (YYYY-MM-DD)
+    - search: Search by name or rank
+    - latest_only: If true, return only records where is_latest=True (one per personnel)
+    """
+    from sqlalchemy import extract, func, or_
+    
+    q = db.query(models.BMIRecord)
+    
+    # Apply filters
+    if personnel_id:
+        q = q.filter(models.BMIRecord.personnel_id == personnel_id)
+    
+    if unit and unit != 'All Units':
+        q = q.filter(models.BMIRecord.unit == unit)
+    
+    if month and year:
+        q = q.filter(
+            extract('month', models.BMIRecord.date_taken) == month,
+            extract('year', models.BMIRecord.date_taken) == year
+        )
+    
+    if exact_date:
+        parsed_date = parse_date_taken(exact_date)
+        if parsed_date:
+            q = q.filter(
+                extract('year', models.BMIRecord.date_taken) == parsed_date.year,
+                extract('month', models.BMIRecord.date_taken) == parsed_date.month,
+                extract('day', models.BMIRecord.date_taken) == parsed_date.day
+            )
+    
+    if search:
+        search_term = f"%{search}%"
+        q = q.filter(
+            or_(
+                models.BMIRecord.name.ilike(search_term),
+                models.BMIRecord.rank.ilike(search_term)
+            )
+        )
+    
+    if latest_only:
+        # NEW: Use is_latest flag for filtering - reliable one-per-personnel approach
+        q = q.filter(models.BMIRecord.is_latest == True)
+    
+    return q.order_by(models.BMIRecord.date_taken.desc()).all()
+
+
+@router.get('/history/{identifier}', response_model=schemas.BMIHistorySchema)
+def get_bmi_history(
+    identifier: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all BMI history records for a specific personnel.
+    
+    The identifier can be:
+    - A BMI record ID (numeric): Finds that record and returns all records with the same name
+    - A personnel ID from Personnel table (numeric)
+    - A name string: Finds all BMI records matching that name
+    
+    Returns the personnel info, latest record, and full history sorted newest first.
+    """
+    records = []
+    personnel = None
+    personnel_name = None
+    personnel_rank = None
+    personnel_unit = None
+    
+    # Check if it's a numeric ID or a name
+    is_numeric = identifier.isdigit()
+    
+    if is_numeric:
+        record_id = int(identifier)
+        
+        # First, try to find by BMI record ID and get its name
+        bmi_record = db.query(models.BMIRecord).filter(models.BMIRecord.id == record_id).first()
+        
+        if bmi_record:
+            # Get the personnel name from this BMI record
+            personnel_name = bmi_record.name
+            personnel_rank = bmi_record.rank
+            personnel_unit = bmi_record.unit
+            
+            # Find all BMI records with the same name (case-insensitive)
+            records = db.query(models.BMIRecord).filter(
+                models.BMIRecord.name.ilike(bmi_record.name)
+            ).order_by(models.BMIRecord.date_taken.desc()).all()
+            
+            # Also try to find Personnel by this name
+            personnel = db.query(models.Personnel).filter(
+                (models.Personnel.first_name + ' ' + models.Personnel.last_name).ilike(f"%{personnel_name}%") |
+                (models.Personnel.last_name + ' ' + models.Personnel.first_name).ilike(f"%{personnel_name}%")
+            ).first()
+        else:
+            # ID not found as BMI record, try it as a Personnel ID
+            personnel = db.query(models.Personnel).filter(models.Personnel.id == record_id).first()
+            if personnel:
+                personnel_name = f"{personnel.first_name} {personnel.last_name}"
+                personnel_rank = personnel.rank
+                personnel_unit = personnel.unit
+                # Get all BMI records for this personnel by personnel_id
+                records = db.query(models.BMIRecord).filter(
+                    models.BMIRecord.personnel_id == personnel.id
+                ).order_by(models.BMIRecord.date_taken.desc()).all()
+                
+                # If no records by personnel_id, try by name
+                if not records:
+                    records = db.query(models.BMIRecord).filter(
+                        models.BMIRecord.name.ilike(f"%{personnel_name}%")
+                    ).order_by(models.BMIRecord.date_taken.desc()).all()
+    else:
+        # It's a name - find all matching BMI records
+        personnel_name = identifier
+        records = db.query(models.BMIRecord).filter(
+            models.BMIRecord.name.ilike(f"%{identifier}%")
+        ).order_by(models.BMIRecord.date_taken.desc()).all()
+        
+        if records:
+            # Get info from the first (latest) record
+            latest = records[0]
+            personnel_rank = latest.rank
+            personnel_unit = latest.unit
+            
+            # Try to find Personnel by name
+            personnel = db.query(models.Personnel).filter(
+                (models.Personnel.first_name + ' ' + models.Personnel.last_name).ilike(f"%{latest.name}%") |
+                (models.Personnel.last_name + ' ' + models.Personnel.first_name).ilike(f"%{latest.name}%")
+            ).first()
+    
+    # Get latest record
+    latest = records[0] if records else None
+    
+    return {
+        "personnel_id": personnel.id if personnel else (latest.personnel_id if latest else None),
+        "personnel_name": personnel_name if personnel_name else (latest.name if latest else None),
+        "personnel_rank": personnel_rank if personnel_rank else (latest.rank if latest else None),
+        "personnel_unit": personnel_unit if personnel_unit else (latest.unit if latest else None),
+        "latest_bmi": latest,
+        "history": records
+    }
+
+
+@router.get('/history/by-name/{name}', response_model=schemas.BMIHistorySchema)
+def get_bmi_history_by_name(
+    name: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get BMI history by personnel name (for cases where personnel_id is not set).
+    """
+    # Get all BMI records matching this name
+    records = db.query(models.BMIRecord).filter(
+        models.BMIRecord.name.ilike(f"%{name}%")
+    ).order_by(models.BMIRecord.date_taken.desc()).all()
+    
+    latest = records[0] if records else None
+    
+    return {
+        "personnel_id": latest.personnel_id if latest else None,
+        "personnel_name": name,
+        "personnel_rank": latest.rank if latest else None,
+        "personnel_unit": latest.unit if latest else None,
+        "latest_bmi": latest,
+        "history": records
+    }
+
+
+@router.get('/history/{personnel_id}/by-date', response_model=schemas.BMISchema)
+def get_bmi_by_date(
+    personnel_id: int,
+    date: str,  # YYYY-MM-DD format
+    db: Session = Depends(get_db)
+):
+    """
+    Get the BMI record for a specific personnel on a specific date.
+    If multiple records exist on that day, returns the most recent one.
+    """
+    from sqlalchemy import extract
+    
+    parsed_date = parse_date_taken(date)
+    if not parsed_date:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    
+    # Get the personnel info
+    personnel = db.query(models.Personnel).filter(models.Personnel.id == personnel_id).first()
+    
+    # Try to find records for this personnel on the specific date
+    records = db.query(models.BMIRecord).filter(
+        models.BMIRecord.personnel_id == personnel_id,
+        extract('year', models.BMIRecord.date_taken) == parsed_date.year,
+        extract('month', models.BMIRecord.date_taken) == parsed_date.month,
+            extract('day', models.BMIRecord.date_taken) == parsed_date.day
+        ).order_by(models.BMIRecord.date_taken.desc()).all()
+    
+    # If no records linked by personnel_id, try by name matching
+    if not records and personnel:
+        name_pattern = f"%{personnel.first_name}%{personnel.last_name}%"
+        records = db.query(models.BMIRecord).filter(
+            models.BMIRecord.name.ilike(name_pattern),
+            extract('year', models.BMIRecord.date_taken) == parsed_date.year,
+            extract('month', models.BMIRecord.date_taken) == parsed_date.month,
+            extract('day', models.BMIRecord.date_taken) == parsed_date.day
+        ).order_by(models.BMIRecord.date_taken.desc()).all()
+    
+    if not records:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No BMI record found for the selected date {date}"
+        )
+    
+    # Return the most recent one
+    return records[0]
+
+
+@router.get('/latest/{personnel_id}', response_model=schemas.BMISchema)
+def get_latest_bmi(
+    personnel_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get the latest BMI record for a specific personnel.
+    """
+    # Get the personnel info
+    personnel = db.query(models.Personnel).filter(models.Personnel.id == personnel_id).first()
+    
+    # Try to find the latest record for this personnel
+    record = db.query(models.BMIRecord).filter(
+        models.BMIRecord.personnel_id == personnel_id
+    ).order_by(models.BMIRecord.date_taken.desc()).first()
+    
+    # If no records linked by personnel_id, try by name matching
+    if not record and personnel:
+        name_pattern = f"%{personnel.first_name}%{personnel.last_name}%"
+        record = db.query(models.BMIRecord).filter(
+            models.BMIRecord.name.ilike(name_pattern)
+        ).order_by(models.BMIRecord.date_taken.desc()).first()
+    
+    if not record:
+        raise HTTPException(
+            status_code=404,
+            detail="No BMI records found for this personnel"
+        )
+    
+    return record
+
+
+@router.get('/timeline/{personnel_id}', response_model=List[schemas.BMITimelineSchema])
+def get_bmi_timeline(
+    personnel_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Get simplified timeline data for BMI charts/cards.
+    Returns date, BMI value, classification, and weight for each record.
+    """
+    # Get the personnel info
+    personnel = db.query(models.Personnel).filter(models.Personnel.id == personnel_id).first()
+    
+    # Get all BMI records for timeline
+    records = db.query(models.BMIRecord).filter(
+        models.BMIRecord.personnel_id == personnel_id
+    ).order_by(models.BMIRecord.date_taken.asc()).all()
+    
+    # If no records linked by personnel_id, try by name matching
+    if not records and personnel:
+        name_pattern = f"%{personnel.first_name}%{personnel.last_name}%"
+        records = db.query(models.BMIRecord).filter(
+            models.BMIRecord.name.ilike(name_pattern)
+        ).order_by(models.BMIRecord.date_taken.asc()).all()
+    
+    timeline = []
+    for rec in records:
+        timeline.append({
+            "date_taken": rec.date_taken,
+            "bmi": rec.bmi,
+            "classification": rec.classification,
+            "weight_kg": rec.weight_kg
+        })
+    
+    return timeline
+
+
+@router.get('/personnel-list')
+def get_personnel_with_bmi(db: Session = Depends(get_db)):
+    """
+    Get list of all personnel with their latest BMI status.
+    Useful for dropdown selection in the BMI history view.
+    """
+    from sqlalchemy import func
+    
+    # Get all personnel
+    all_personnel = db.query(models.Personnel).all()
+    
+    result = []
+    for p in all_personnel:
+        # Get latest BMI for this personnel
+        latest_bmi = db.query(models.BMIRecord).filter(
+            models.BMIRecord.personnel_id == p.id
+        ).order_by(models.BMIRecord.date_taken.desc()).first()
+        
+        # Also check by name matching
+        if not latest_bmi:
+            name_pattern = f"%{p.first_name}%{p.last_name}%"
+            latest_bmi = db.query(models.BMIRecord).filter(
+                models.BMIRecord.name.ilike(name_pattern)
+            ).order_by(models.BMIRecord.date_taken.desc()).first()
+        
+        # Count total BMI records for this personnel
+        total_records = db.query(models.BMIRecord).filter(
+            models.BMIRecord.personnel_id == p.id
+        ).count()
+        
+        if not total_records:
+            name_pattern = f"%{p.first_name}%{p.last_name}%"
+            total_records = db.query(models.BMIRecord).filter(
+                models.BMIRecord.name.ilike(name_pattern)
+            ).count()
+        
+        result.append({
+            "id": p.id,
+            "name": f"{p.first_name} {p.last_name}",
+            "rank": p.rank,
+            "unit": p.unit,
+            "status": p.status,
+            "latest_bmi": latest_bmi.bmi if latest_bmi else None,
+            "latest_classification": latest_bmi.classification if latest_bmi else None,
+            "latest_date": latest_bmi.date_taken if latest_bmi else None,
+            "total_records": total_records
+        })
+    
+    return result
+
+
+@router.get('/distinct-personnel')
+def get_distinct_personnel_bmi(db: Session = Depends(get_db)):
+    """
+    Get list of all distinct personnel who have BMI records.
+    Returns records where is_latest=True (one per personnel).
+    """
+    from sqlalchemy import func
+    
+    # NEW: Use is_latest flag - reliable approach
+    # Get all records marked as latest
+    latest_records = db.query(models.BMIRecord).filter(
+        models.BMIRecord.is_latest == True
+    ).all()
+    
+    result = []
+    for rec in latest_records:
+        # Count total BMI records for this personnel (by name)
+        total_records = db.query(models.BMIRecord).filter(
+            models.BMIRecord.name.ilike(rec.name)
+        ).count()
+        
+        result.append({
+            "id": rec.id,
+            "name": rec.name,
+            "rank": rec.rank,
+            "unit": rec.unit,
+            "personnel_id": rec.personnel_id,
+            "latest_bmi": rec.bmi,
+            "latest_classification": rec.classification,
+            "latest_date": rec.date_taken,
+            "total_records": total_records,
+            "is_latest": rec.is_latest
+        })
+    
+    return sorted(result, key=lambda x: (x['name'] or '').lower())
+
+
+# ==================== BMI UPDATE ENDPOINT (Version-Preserving) ====================
+
+@router.put('/{record_id}', response_model=schemas.BMISchema)
+async def update_bmi(
+    record_id: int,
+    rank: str = Form(...),
+    name: str = Form(...),
+    unit: str = Form(...),
+    age: int = Form(...),
+    sex: str = Form(...),
+    height_cm: float = Form(...),
+    weight_kg: float = Form(...),
+    waist_cm: Optional[float] = Form(None),
+    hip_cm: Optional[float] = Form(None),
+    wrist_cm: Optional[float] = Form(None),
+    date_taken: Optional[str] = Form(None),
+    photo_front: Optional[UploadFile] = File(None),
+    photo_left: Optional[UploadFile] = File(None),
+    photo_right: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Update an existing BMI record - VERSION PRESERVING.
+    
+    IMPORTANT: This does NOT overwrite the old record. Instead:
+    1. The OLD record is kept unchanged as a historical snapshot (is_latest = False)
+    2. A NEW BMI record is created with the updated values (is_latest = True)
+    3. The new record becomes the latest/current version
+    
+    This preserves the complete history while allowing corrections/updates.
+    """
+    # Find the existing (old) record to verify it exists
+    old_record = db.query(models.BMIRecord).filter(models.BMIRecord.id == record_id).first()
+    if not old_record:
+        raise HTTPException(status_code=404, detail="BMI record not found")
+    
+    # Preserve the old record's important fields before we do anything
+    preserved_personnel_id = old_record.personnel_id
+    preserved_old_front = old_record.photo_front
+    preserved_old_left = old_record.photo_left
+    preserved_old_right = old_record.photo_right
+    
+    # NEW: Mark the old record as NOT latest
+    old_record.is_latest = False
+    db.commit()
+    
+    # Parse name to first and last for file naming
+    parts = name.strip().split()
+    first_name = parts[0] if parts else ''
+    last_name = parts[-1] if len(parts) > 1 else ''
+    unit_folder = unit.upper()
+    folder_abs = uploads_abs('bmi', unit_folder, bmi_folder_name(first_name, last_name))
+    folder_rel = uploads_rel('bmi', unit_folder, bmi_folder_name(first_name, last_name))
+    os.makedirs(folder_abs, exist_ok=True)
+    base_name = f"{last_name}_{first_name}" if last_name else first_name
+    
+    # Determine photo paths for the NEW record
+    # Use new photos if uploaded, otherwise reuse old photo paths
+    front_photo_path = preserved_old_front
+    left_photo_path = preserved_old_left
+    right_photo_path = preserved_old_right
+    
+    # Handle new front photo
+    if photo_front and photo_front.filename:
+        front_name = f"BMI_{base_name}_front.jpg"
+        front_path_abs = os.path.join(str(folder_abs), front_name)
+        with open(front_path_abs, 'wb') as f:
+            f.write(await photo_front.read())
+        front_photo_path = f"{folder_rel}/{front_name}".replace("\\", "/")
+    
+    # Handle new left photo
+    if photo_left and photo_left.filename:
+        left_name = f"BMI_{base_name}_left.jpg"
+        left_path_abs = os.path.join(str(folder_abs), left_name)
+        with open(left_path_abs, 'wb') as f:
+            f.write(await photo_left.read())
+        left_photo_path = f"{folder_rel}/{left_name}".replace("\\", "/")
+    
+    # Handle new right photo
+    if photo_right and photo_right.filename:
+        right_name = f"BMI_{base_name}_right.jpg"
+        right_path_abs = os.path.join(str(folder_abs), right_name)
+        with open(right_path_abs, 'wb') as f:
+            f.write(await photo_right.read())
+        right_photo_path = f"{folder_rel}/{right_name}".replace("\\", "/")
+    
+    # Parse date
+    parsed_date = parse_date_taken(date_taken) if date_taken else datetime.utcnow()
+    
+    # Calculate new BMI and classification
+    bmi_value = compute_bmi(weight_kg, height_cm)
+    pnp_classification = classify_pnp_bmi(bmi_value, age)
+    
+    # Use raw SQL INSERT to create the NEW record
+    # This bypasses any ORM session issues that might cause overwriting
+    from sqlalchemy import text
+    
+    # Insert new record with raw SQL, including is_latest=True
+    insert_sql = text("""
+        INSERT INTO bmi_records (
+            personnel_id, rank, name, unit, age, sex, height_cm, weight_kg,
+            waist_cm, hip_cm, wrist_cm, date_taken, bmi, classification, result,
+            photo_front, photo_left, photo_right, is_latest
+        ) VALUES (
+            :personnel_id, :rank, :name, :unit, :age, :sex, :height_cm, :weight_kg,
+            :waist_cm, :hip_cm, :wrist_cm, :date_taken, :bmi, :classification, :result,
+            :photo_front, :photo_left, :photo_right, :is_latest
+        )
+    """)
+    
+    result = db.execute(insert_sql, {
+        'personnel_id': preserved_personnel_id,
+        'rank': rank,
+        'name': name,
+        'unit': unit,
+        'age': age,
+        'sex': sex,
+        'height_cm': height_cm,
+        'weight_kg': weight_kg,
+        'waist_cm': waist_cm,
+        'hip_cm': hip_cm,
+        'wrist_cm': wrist_cm,
+        'date_taken': parsed_date,
+        'bmi': bmi_value,
+        'classification': pnp_classification,
+        'result': f"{bmi_value:.2f}",
+        'photo_front': front_photo_path,
+        'photo_left': left_photo_path,
+        'photo_right': right_photo_path,
+        'is_latest': True,  # NEW: Mark new record as latest
+    })
+    
+    db.commit()
+    
+    # Get the ID of the newly inserted record
+    new_record_id = result.lastrowid
+    
+    # Fetch the newly created record to return
+    new_record = db.query(models.BMIRecord).filter(models.BMIRecord.id == new_record_id).first()
+    
+    # Return the NEW record (which is now the latest)
+    return new_record
+
+
+@router.get('/record/{record_id}', response_model=schemas.BMISchema)
+def get_bmi_record(record_id: int, db: Session = Depends(get_db)):
+    """
+    Get a single BMI record by ID.
+    Used to prefill the update form.
+    """
+    record = db.query(models.BMIRecord).filter(models.BMIRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="BMI record not found")
+    return record
