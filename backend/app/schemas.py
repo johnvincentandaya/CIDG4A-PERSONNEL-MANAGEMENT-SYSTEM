@@ -23,6 +23,7 @@ class TrainingCertificateSchema(BaseModel):
 
 class PersonnelCreate(BaseModel):
     rank: str
+    badge_number: str
     last_name: str
     first_name: str
     mi: Optional[str] = None
@@ -30,14 +31,35 @@ class PersonnelCreate(BaseModel):
     unit: str
     status: str
 
+    # Optional Form201 fields
+    qlf: Optional[str] = None
+    date_of_reassignment: Optional[datetime] = None
+    designation: Optional[str] = None
+    date_of_designation: Optional[datetime] = None
+    highest_eligibility: Optional[str] = None
+    contact_number: Optional[str] = None
+    birthdate: Optional[datetime] = None
+    religion: Optional[str] = None
+    section: Optional[str] = None
+
 class PersonnelSchema(BaseModel):
     id: int
     rank: str
+    badge_number: Optional[str]
     last_name: str
     first_name: str
     mi: Optional[str]
     suffix: Optional[str]
     unit: str
+    qlf: Optional[str]
+    date_of_reassignment: Optional[datetime]
+    designation: Optional[str]
+    date_of_designation: Optional[datetime]
+    highest_eligibility: Optional[str]
+    contact_number: Optional[str]
+    birthdate: Optional[datetime]
+    religion: Optional[str]
+    section: Optional[str]
     status: str
     date_added: datetime
     documents: List[DocumentSchema] = []

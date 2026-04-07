@@ -7,6 +7,7 @@ import os
 from app.api.personnel import router as personnel_router
 from app.api.bmi import router as bmi_router
 from sqlalchemy import create_engine, text
+from app.database import migrate_db
 
 
 def run_migrations():
@@ -66,6 +67,11 @@ def run_migrations():
             pass
     
     engine.dispose()
+    try:
+        # apply higher-level migrations for new personnel columns
+        migrate_db()
+    except Exception:
+        pass
 
 
 @asynccontextmanager

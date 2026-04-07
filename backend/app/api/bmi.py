@@ -614,16 +614,21 @@ async def create_bmi(
     db: Session = Depends(get_db)
 ):
     ensure_upload_folders()
+    # Normalize textual inputs to uppercase
+    rank = rank.upper() if isinstance(rank, str) else rank
+    name = name.upper() if isinstance(name, str) else name
+    unit = unit.upper() if isinstance(unit, str) else unit
+    sex = sex.upper() if isinstance(sex, str) else sex
 
-    # parse name to first and last for file naming (Last_First)
-    parts = name.strip().split()
+    # parse name to first and last for file naming (First_Last)
+    parts = name.strip().split() if name else []
     first_name = parts[0] if parts else ''
     last_name = parts[-1] if len(parts) > 1 else ''
     unit_folder = unit.upper()
     folder_abs = uploads_abs('bmi', unit_folder, bmi_folder_name(first_name, last_name))
     folder_rel = uploads_rel('bmi', unit_folder, bmi_folder_name(first_name, last_name))
     os.makedirs(folder_abs, exist_ok=True)
-    base_name = f"{last_name}_{first_name}" if last_name else first_name
+    base_name = f"{first_name}_{last_name}" if last_name else first_name
     front_name = f"BMI_{base_name}_front.jpg"
     left_name = f"BMI_{base_name}_left.jpg"
     right_name = f"BMI_{base_name}_right.jpg"
@@ -1252,7 +1257,7 @@ async def update_bmi(
     folder_abs = uploads_abs('bmi', unit_folder, bmi_folder_name(first_name, last_name))
     folder_rel = uploads_rel('bmi', unit_folder, bmi_folder_name(first_name, last_name))
     os.makedirs(folder_abs, exist_ok=True)
-    base_name = f"{last_name}_{first_name}" if last_name else first_name
+    base_name = f"{first_name}_{last_name}" if last_name else first_name
     
     # Determine photo paths for the NEW record
     # Use new photos if uploaded, otherwise reuse old photo paths

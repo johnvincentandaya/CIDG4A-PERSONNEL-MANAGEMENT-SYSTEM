@@ -13,8 +13,21 @@ import openpyxl.styles
 from openpyxl import Workbook
 from openpyxl.styles import Font, Border, Side, Alignment
 from fastapi.responses import StreamingResponse
+from reportlab.lib.pagesizes import letter, landscape
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.units import inch
 
 router = APIRouter()
+
+def _upper_str(val):
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val.upper()
+    return val
 
 ALLOWED_FILE_EXTENSIONS = {".pdf", ".doc", ".docx"}
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
@@ -74,12 +87,20 @@ def startup():
 @router.post("/basic", response_model=schemas.PersonnelSchema)
 def create_personnel_basic(
     rank: str = Form(...),
+    badge_number: str = Form(...),
     last_name: str = Form(...),
     first_name: str = Form(...),
     mi: Optional[str] = Form(None),
     suffix: Optional[str] = Form(None),
     unit: str = Form(...),
     status: str = Form(...),
+    qlf: Optional[str] = Form(None),
+    designation: Optional[str] = Form(None),
+    highest_eligibility: Optional[str] = Form(None),
+    contact_number: Optional[str] = Form(None),
+    birthdate: Optional[str] = Form(None),
+    religion: Optional[str] = Form(None),
+    section: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -87,13 +108,21 @@ def create_personnel_basic(
     Documents and trainings can be attached later via the update endpoint.
     """
     p = models.Personnel(
-        rank=rank,
-        last_name=last_name,
-        first_name=first_name,
-        mi=mi,
-        suffix=suffix,
-        unit=unit,
-        status=status,
+        rank=_upper_str(rank),
+        badge_number=_upper_str(badge_number),
+        last_name=_upper_str(last_name),
+        first_name=_upper_str(first_name),
+        mi=_upper_str(mi),
+        suffix=_upper_str(suffix),
+        unit=_upper_str(unit),
+        status=_upper_str(status),
+        qlf=_upper_str(qlf),
+        designation=_upper_str(designation),
+        highest_eligibility=_upper_str(highest_eligibility),
+        contact_number=_upper_str(contact_number),
+        birthdate=birthdate,
+        religion=_upper_str(religion),
+        section=_upper_str(section),
     )
     db.add(p)
     db.commit()
@@ -104,12 +133,22 @@ def create_personnel_basic(
 @router.post("/", response_model=schemas.PersonnelSchema)
 async def create_personnel(
     rank: str = Form(...),
+    badge_number: str = Form(...),
     last_name: str = Form(...),
     first_name: str = Form(...),
     mi: Optional[str] = Form(None),
     suffix: Optional[str] = Form(None),
     unit: str = Form(...),
     status: str = Form(...),
+    qlf: Optional[str] = Form(None),
+    date_of_reassignment: Optional[str] = Form(None),
+    designation: Optional[str] = Form(None),
+    date_of_designation: Optional[str] = Form(None),
+    highest_eligibility: Optional[str] = Form(None),
+    contact_number: Optional[str] = Form(None),
+    birthdate: Optional[str] = Form(None),
+    religion: Optional[str] = Form(None),
+    section: Optional[str] = Form(None),
     # single-file documents (now optional so record can be saved even if incomplete)
     pds: Optional[UploadFile] = File(None),
     appointment: Optional[UploadFile] = File(None),
@@ -130,15 +169,57 @@ async def create_personnel(
     db: Session = Depends(get_db),
 ):
 
-    # create personnel entry
+    # parse date strings into datetimes where provided
+    def _parse_date(s: Optional[str]):
+        if not s:
+            return None
+        try:
+            return datetime.strptime(s, "%Y-%m-%d")
+        except Exception:
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                return None
+
+    parsed_reassignment = _parse_date(date_of_reassignment)
+    parsed_designation_date = _parse_date(date_of_designation)
+    parsed_birthdate = _parse_date(birthdate)
+
+    # Normalize textual inputs to uppercase before saving and before using for filenames
+    rank = _upper_str(rank)
+    badge_number = _upper_str(badge_number)
+    last_name = _upper_str(last_name)
+    first_name = _upper_str(first_name)
+    mi = _upper_str(mi)
+    suffix = _upper_str(suffix)
+    unit = _upper_str(unit)
+    status = _upper_str(status)
+    qlf = _upper_str(qlf)
+    designation = _upper_str(designation)
+    highest_eligibility = _upper_str(highest_eligibility)
+    contact_number = _upper_str(contact_number)
+    religion = _upper_str(religion)
+    section = _upper_str(section)
+
+    # create personnel entry (badge_number is required)
     p = models.Personnel(
         rank=rank,
+        badge_number=badge_number,
         last_name=last_name,
         first_name=first_name,
         mi=mi,
         suffix=suffix,
         unit=unit,
         status=status,
+        qlf=qlf,
+        designation=designation,
+        highest_eligibility=highest_eligibility,
+        contact_number=contact_number,
+        birthdate=parsed_birthdate,
+        religion=religion,
+        section=section,
+        date_of_reassignment=parsed_reassignment,
+        date_of_designation=parsed_designation_date,
     )
     db.add(p)
     db.commit()
@@ -154,7 +235,8 @@ async def create_personnel(
         if not file_obj:
             return
         ext, content = await read_and_validate_upload(file_obj)
-        dest_name = f"FORM201_{last_name}_{first_name}_{shortname}{ext}"
+        # Use required file naming: FORM201_<First>_<Last>_<document>.pdf
+        dest_name = f"FORM201_{first_name}_{last_name}_{shortname}{ext}"
         dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
         with open(dest_path_abs, 'wb') as out:
             out.write(content)
@@ -184,7 +266,7 @@ async def create_personnel(
                 title = mandatory_titles[idx]
             safe_title = title.replace(" ", "_") if title else f"mandatory_{idx+1}"
             ext, content = await read_and_validate_upload(f)
-            dest_name = f"FORM201_{last_name}_{first_name}_mandatory_{safe_title}{ext}"
+            dest_name = f"FORM201_{first_name}_{last_name}_mandatory_{safe_title}{ext}"
             dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             with open(dest_path_abs, "wb") as out:
                 out.write(content)
@@ -192,7 +274,7 @@ async def create_personnel(
             tc = models.TrainingCertificate(
                 personnel_id=p.id,
                 category="mandatory",
-                title=title or safe_title,
+                title=(title.upper() if title else safe_title.upper()),
                 file_path=norm_path,
             )
             db.add(tc)
@@ -205,7 +287,7 @@ async def create_personnel(
                 title = specialized_titles[idx]
             safe_title = title.replace(" ", "_") if title else f"specialized_{idx+1}"
             ext, content = await read_and_validate_upload(f)
-            dest_name = f"FORM201_{last_name}_{first_name}_specialized_{safe_title}{ext}"
+            dest_name = f"FORM201_{first_name}_{last_name}_specialized_{safe_title}{ext}"
             dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             with open(dest_path_abs, "wb") as out:
                 out.write(content)
@@ -213,7 +295,7 @@ async def create_personnel(
             tc = models.TrainingCertificate(
                 personnel_id=p.id,
                 category="specialized",
-                title=title or safe_title,
+                title=(title.upper() if title else safe_title.upper()),
                 file_path=norm_path,
             )
             db.add(tc)
@@ -255,12 +337,22 @@ def get_person(person_id: int, db: Session = Depends(get_db)):
 async def update_person(
     person_id: int,
     rank: str = Form(...),
+    badge_number: str = Form(...),
     last_name: str = Form(...),
     first_name: str = Form(...),
     mi: Optional[str] = Form(None),
     suffix: Optional[str] = Form(None),
     unit: str = Form(...),
     status: str = Form(...),
+    qlf: Optional[str] = Form(None),
+    date_of_reassignment: Optional[str] = Form(None),
+    designation: Optional[str] = Form(None),
+    date_of_designation: Optional[str] = Form(None),
+    highest_eligibility: Optional[str] = Form(None),
+    contact_number: Optional[str] = Form(None),
+    birthdate: Optional[str] = Form(None),
+    religion: Optional[str] = Form(None),
+    section: Optional[str] = Form(None),
     # optional replacement single files
     pds: Optional[UploadFile] = File(None),
     appointment: Optional[UploadFile] = File(None),
@@ -288,13 +380,36 @@ async def update_person(
         raise HTTPException(status_code=404, detail='Personnel not found')
 
     # update basic fields
-    person.rank = rank
-    person.last_name = last_name
-    person.first_name = first_name
-    person.mi = mi
-    person.suffix = suffix
-    person.unit = unit
-    person.status = status
+    # parse incoming date strings
+    def _parse_date(s: Optional[str]):
+        if not s:
+            return None
+        try:
+            return datetime.strptime(s, "%Y-%m-%d")
+        except Exception:
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                return None
+
+    # Normalize incoming textual values to uppercase before saving
+    person.rank = _upper_str(rank)
+    person.badge_number = _upper_str(badge_number)
+    person.last_name = _upper_str(last_name)
+    person.first_name = _upper_str(first_name)
+    person.mi = _upper_str(mi)
+    person.suffix = _upper_str(suffix)
+    person.unit = _upper_str(unit)
+    person.status = _upper_str(status)
+    person.qlf = _upper_str(qlf)
+    person.designation = _upper_str(designation)
+    person.date_of_reassignment = _parse_date(date_of_reassignment)
+    person.date_of_designation = _parse_date(date_of_designation)
+    person.highest_eligibility = _upper_str(highest_eligibility)
+    person.contact_number = _upper_str(contact_number)
+    person.birthdate = _parse_date(birthdate)
+    person.religion = _upper_str(religion)
+    person.section = _upper_str(section)
     db.add(person)
     db.commit()
 
@@ -309,7 +424,7 @@ async def update_person(
         if not file_obj:
             return
         ext, content = await read_and_validate_upload(file_obj)
-        dest_name = f"FORM201_{last_name}_{first_name}_{shortname}{ext}"
+        dest_name = f"FORM201_{first_name}_{last_name}_{shortname}{ext}"
         dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
         norm_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
         # check existing doc
@@ -404,12 +519,12 @@ async def update_person(
                 title = mandatory_titles[idx]
             safe_title = title.replace(' ', '_') if title else f'mandatory_new_{idx+1}'
             ext, content = await read_and_validate_upload(f)
-            dest_name = f"FORM201_{last_name}_{first_name}_mandatory_{safe_title}{ext}"
+            dest_name = f"FORM201_{first_name}_{last_name}_mandatory_{safe_title}{ext}"
             dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             with open(dest_path_abs, 'wb') as out:
                 out.write(content)
             norm_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
-            tc = models.TrainingCertificate(personnel_id=person.id, category='mandatory', title=title or safe_title, file_path=norm_path)
+            tc = models.TrainingCertificate(personnel_id=person.id, category='mandatory', title=(title.upper() if title else safe_title.upper()), file_path=norm_path)
             db.add(tc)
 
     if specialized_files:
@@ -419,12 +534,12 @@ async def update_person(
                 title = specialized_titles[idx]
             safe_title = title.replace(' ', '_') if title else f'specialized_new_{idx+1}'
             ext, content = await read_and_validate_upload(f)
-            dest_name = f"FORM201_{last_name}_{first_name}_specialized_{safe_title}{ext}"
+            dest_name = f"FORM201_{first_name}_{last_name}_specialized_{safe_title}{ext}"
             dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             with open(dest_path_abs, 'wb') as out:
                 out.write(content)
             norm_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
-            tc = models.TrainingCertificate(personnel_id=person.id, category='specialized', title=title or safe_title, file_path=norm_path)
+            tc = models.TrainingCertificate(personnel_id=person.id, category='specialized', title=(title.upper() if title else safe_title.upper()), file_path=norm_path)
             db.add(tc)
 
     db.commit()
@@ -640,26 +755,513 @@ def generate_form201_report(
 
 
 @router.post('/report')
-def personnel_report(unit: Optional[str] = Form(None), status: Optional[str] = Form(None), report_type: str = Form('excel'), db: Session = Depends(get_db)):
+def personnel_report(
+    unit: Optional[str] = Form(None),
+    status: Optional[str] = Form(None),
+    report_type: str = Form('excel'),
+    prepared_by: str = Form(''),
+    noted_by: str = Form(''),
+    file_name: str = Form('form201_report'),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate Form 201 Excel grouped by sections with exact columns.
+    Columns (exact order): No., Badge Number, Rank, Last Name, First Name, Middle Name, QLF,
+    Date of Reassignment, Designation, Date of Designation, Mandatory Training,
+    Specialized Course, Highest Eligibility, Contact Number, Birthdate, Religion
+    """
+    from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    # Query personnel with filters
     q = db.query(models.Personnel)
     if unit and unit != 'All Units':
         q = q.filter(models.Personnel.unit == unit)
     if status and status != 'All Status':
         q = q.filter(models.Personnel.status == status)
-    records = q.order_by(models.Personnel.last_name).all()
-    # generate excel
+
+    all_personnel = q.order_by(models.Personnel.last_name).all()
+
+    def safe(v):
+        if v is None:
+            return 'N/A'
+        if isinstance(v, str) and not v.strip():
+            return 'N/A'
+        return v
+
+    def fmt_date(v):
+        if not v:
+            return 'N/A'
+        try:
+            return v.strftime('%Y-%m-%d')
+        except Exception:
+            return str(v)
+
     wb = Workbook()
+    sheet_names = [
+        'LIST OF NUP (NON-UNIFORMED PERSONNEL)',
+        'LIST OF UP (UNIFORMED PERSONNEL)',
+        'TERRITORIAL STRENGTH',
+        'RANK STRUCTURE',
+        'RANK PROFILE',
+        'DISPOSITION OF TROOPS',
+        'PERSONNEL FILL-UP',
+        'KEY OFFICERS',
+        'STATION LIST',
+        'RANK INVENTORY',
+        'CIDG RFU4A LIST OF PCOs AND CONTACT NUMBERS',
+    ]
+
+    thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+
+    # Prepare helper to create simple titled header
+    def write_sheet_title(ws, title_text):
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
+        c = ws.cell(row=1, column=1)
+        c.value = 'CRIMINAL INVESTIGATION AND DETECTION GROUP REGION 4A'
+        c.font = Font(bold=True, size=12)
+        c.alignment = Alignment(horizontal='center', vertical='center')
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=10)
+        c2 = ws.cell(row=2, column=1)
+        c2.value = title_text
+        c2.font = Font(bold=True, size=11)
+        c2.alignment = Alignment(horizontal='center', vertical='center')
+        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=10)
+        c3 = ws.cell(row=3, column=1)
+        c3.value = f"(as of {datetime.utcnow().strftime('%B %d, %Y')})"
+        c3.font = Font(italic=True, size=10)
+        c3.alignment = Alignment(horizontal='center', vertical='center')
+
+    # 1) LIST OF NUP
     ws = wb.active
-    ws.title = 'Form201 Report'
-    headers = ['Rank','Last Name','First Name','Middle Initial','Suffix','Unit','Status','Document Completion Status','Date Added']
-    ws.append(headers)
-    expected_docs = 13
-    for p in records:
-        doc_count = len(p.documents or [])
-        completion = f"{doc_count}/{expected_docs}"
-        row = [p.rank, p.last_name, p.first_name, p.mi or '', p.suffix or '', p.unit, p.status, completion, p.date_added.strftime('%Y-%m-%d') if p.date_added else '']
-        ws.append(row)
+    ws.title = sheet_names[0]
+    write_sheet_title(ws, sheet_names[0])
+    current_row = 5
+    headers = ['No.', 'Badge Number', 'Rank', 'Last Name', 'First Name', 'Middle Name', 'Suffix', 'Unit', 'Designation', 'Contact Number', 'Status']
+    for col_idx, col_name in enumerate(headers, start=1):
+        cell = ws.cell(row=current_row, column=col_idx)
+        cell.value = col_name
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = header_fill
+        cell.border = thin
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    current_row += 1
+    idx = 0
+    for p in all_personnel:
+        if (p.status or '').upper() != 'NUP':
+            continue
+        idx += 1
+        row = [
+            idx,
+            safe(p.badge_number),
+            safe(p.rank),
+            safe(p.last_name),
+            safe(p.first_name),
+            safe(p.mi),
+            safe(p.suffix),
+            safe(p.unit),
+            safe(p.designation),
+            safe(p.contact_number),
+            safe(p.status),
+        ]
+        for col_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+            c.alignment = Alignment(horizontal='left', vertical='center')
+        current_row += 1
+    # footer
+    footer_r = current_row + 2
+    ws.cell(row=footer_r, column=1).value = 'Prepared by:'
+    ws.cell(row=footer_r+1, column=1).value = prepared_by or ''
+    ws.cell(row=footer_r, column=6).value = 'Noted by:'
+    ws.cell(row=footer_r+1, column=6).value = noted_by or ''
+    # column widths for sheet 1
+    widths = [6, 14, 12, 18, 18, 12, 10, 14, 18, 16, 12]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # 2) LIST OF UP
+    ws = wb.create_sheet(title=sheet_names[1])
+    write_sheet_title(ws, sheet_names[1])
+    current_row = 5
+    for col_idx, col_name in enumerate(headers, start=1):
+        cell = ws.cell(row=current_row, column=col_idx)
+        cell.value = col_name
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = header_fill
+        cell.border = thin
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    current_row += 1
+    idx = 0
+    for p in all_personnel:
+        if (p.status or '').upper() != 'UP':
+            continue
+        idx += 1
+        row = [
+            idx,
+            safe(p.badge_number),
+            safe(p.rank),
+            safe(p.last_name),
+            safe(p.first_name),
+            safe(p.mi),
+            safe(p.suffix),
+            safe(p.unit),
+            safe(p.designation),
+            safe(p.contact_number),
+            safe(p.status),
+        ]
+        for col_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+            c.alignment = Alignment(horizontal='left', vertical='center')
+        current_row += 1
+    footer_r = current_row + 2
+    ws.cell(row=footer_r, column=1).value = 'Prepared by:'
+    ws.cell(row=footer_r+1, column=1).value = prepared_by or ''
+    ws.cell(row=footer_r, column=6).value = 'Noted by:'
+    ws.cell(row=footer_r+1, column=6).value = noted_by or ''
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # 3) TERRITORIAL STRENGTH
+    ws = wb.create_sheet(title=sheet_names[2])
+    write_sheet_title(ws, sheet_names[2])
+    units = sorted({(p.unit or 'N/A') for p in all_personnel})
+    current_row = 5
+    ws.cell(row=current_row, column=1).value = 'Unit'
+    ws.cell(row=current_row, column=2).value = 'Personnel Count'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 1
+    for u in units:
+        count = sum(1 for p in all_personnel if (p.unit or '').upper() == (u or '').upper())
+        ws.cell(row=current_row, column=1).value = u
+        ws.cell(row=current_row, column=2).value = count
+        current_row += 1
+    ws.column_dimensions[get_column_letter(1)].width = 30
+    ws.column_dimensions[get_column_letter(2)].width = 16
+
+    # 4) RANK STRUCTURE
+    ws = wb.create_sheet(title=sheet_names[3])
+    write_sheet_title(ws, sheet_names[3])
+    current_row = 5
+    ws.cell(row=current_row, column=1).value = 'Rank'
+    ws.cell(row=current_row, column=2).value = 'Count'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 1
+    ranks = sorted({(p.rank or 'N/A') for p in all_personnel})
+    for r in ranks:
+        cnt = sum(1 for p in all_personnel if (p.rank or '').upper() == (r or '').upper())
+        ws.cell(row=current_row, column=1).value = r
+        ws.cell(row=current_row, column=2).value = cnt
+        current_row += 1
+    ws.column_dimensions[get_column_letter(1)].width = 30
+    ws.column_dimensions[get_column_letter(2)].width = 12
+
+    # 5) RANK PROFILE (list people by rank)
+    ws = wb.create_sheet(title=sheet_names[4])
+    write_sheet_title(ws, sheet_names[4])
+    current_row = 5
+    headers_profile = ['Rank', 'Badge Number', 'Last Name', 'First Name', 'Middle Name', 'Unit', 'Designation']
+    for col_idx, col_name in enumerate(headers_profile, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+    current_row += 1
+    for p in sorted(all_personnel, key=lambda x: (x.rank or '', x.last_name or '')):
+        row = [safe(p.rank), safe(p.badge_number), safe(p.last_name), safe(p.first_name), safe(p.mi), safe(p.unit), safe(p.designation)]
+        for col_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+        current_row += 1
+    for i, w in enumerate([20,14,18,18,12,16,24], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # 6) DISPOSITION OF TROOPS (units x statuses)
+    ws = wb.create_sheet(title=sheet_names[5])
+    write_sheet_title(ws, sheet_names[5])
+    current_row = 5
+    statuses = sorted({(p.status or 'N/A') for p in all_personnel})
+    header = ['Unit', 'Total'] + list(statuses)
+    for col_idx, col_name in enumerate(header, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+    current_row += 1
+    units_list = sorted({(p.unit or 'N/A') for p in all_personnel})
+    for u in units_list:
+        totals = [u, sum(1 for p in all_personnel if (p.unit or '').upper() == (u or '').upper())]
+        for s in statuses:
+            totals.append(sum(1 for p in all_personnel if (p.unit or '').upper() == (u or '').upper() and (p.status or '').upper() == (s or '').upper()))
+        for col_idx, val in enumerate(totals, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+        current_row += 1
+    for i in range(1, len(header) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = 16
+
+    # 7) PERSONNEL FILL-UP (full listing)
+    ws = wb.create_sheet(title=sheet_names[6])
+    write_sheet_title(ws, sheet_names[6])
+    current_row = 5
+    headers_fillup = ['No.', 'Badge Number', 'Rank', 'Last Name', 'First Name', 'MI', 'Unit', 'Designation', 'Contact', 'Status']
+    for col_idx, col_name in enumerate(headers_fillup, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+    current_row += 1
+    for idx, p in enumerate(all_personnel, start=1):
+        row = [idx, safe(p.badge_number), safe(p.rank), safe(p.last_name), safe(p.first_name), safe(p.mi), safe(p.unit), safe(p.designation), safe(p.contact_number), safe(p.status)]
+        for col_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+        current_row += 1
+    for i, w in enumerate([6,14,12,18,18,10,16,22,16,12], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # 8) KEY OFFICERS (select senior ranks)
+    ws = wb.create_sheet(title=sheet_names[7])
+    write_sheet_title(ws, sheet_names[7])
+    current_row = 5
+    kheaders = ['Rank', 'Full Name', 'Badge Number', 'Unit', 'Designation', 'Contact']
+    for col_idx, col_name in enumerate(kheaders, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+    current_row += 1
+    # define senior rank keywords
+    senior_keys = ['PGEN','MGEN','BGEN','COL','LTCOL','LT COL','MAJ','CPT']
+    for p in sorted(all_personnel, key=lambda x: (x.rank or '', x.last_name or '')):
+        if any(k in (p.rank or '') for k in senior_keys):
+            fullname = f"{safe(p.last_name)}, {safe(p.first_name)}"
+            row = [safe(p.rank), fullname, safe(p.badge_number), safe(p.unit), safe(p.designation), safe(p.contact_number)]
+            for col_idx, val in enumerate(row, start=1):
+                c = ws.cell(row=current_row, column=col_idx)
+                c.value = val
+                c.border = thin
+            current_row += 1
+    for i, w in enumerate([14,26,14,16,22,16], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # 9) STATION LIST (unique units)
+    ws = wb.create_sheet(title=sheet_names[8])
+    write_sheet_title(ws, sheet_names[8])
+    current_row = 5
+    ws.cell(row=current_row, column=1).value = 'Station/Unit'
+    ws.cell(row=current_row, column=2).value = 'Personnel Count'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 1
+    for u in sorted({(p.unit or 'N/A') for p in all_personnel}):
+        ws.cell(row=current_row, column=1).value = u
+        ws.cell(row=current_row, column=2).value = sum(1 for p in all_personnel if (p.unit or '').upper() == (u or '').upper())
+        current_row += 1
+    ws.column_dimensions[get_column_letter(1)].width = 30
+
+    # 10) RANK INVENTORY (detailed by rank)
+    ws = wb.create_sheet(title=sheet_names[9])
+    write_sheet_title(ws, sheet_names[9])
+    current_row = 5
+    r_headers = ['Rank', 'No.', 'Badge Number', 'Last Name', 'First Name', 'MI', 'Unit']
+    for col_idx, col_name in enumerate(r_headers, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+    current_row += 1
+    ranks_sorted = sorted({(p.rank or 'N/A') for p in all_personnel})
+    for r in ranks_sorted:
+        members = [p for p in all_personnel if (p.rank or '').upper() == (r or '').upper()]
+        for idx, p in enumerate(members, start=1):
+            row = [r, idx, safe(p.badge_number), safe(p.last_name), safe(p.first_name), safe(p.mi), safe(p.unit)]
+            for col_idx, val in enumerate(row, start=1):
+                c = ws.cell(row=current_row, column=col_idx)
+                c.value = val
+                c.border = thin
+            current_row += 1
+    for i, w in enumerate([18,6,14,18,18,10,16], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # 11) CIDG RFU4A LIST OF PCOs AND CONTACT NUMBERS
+    ws = wb.create_sheet(title=sheet_names[10])
+    write_sheet_title(ws, sheet_names[10])
+    current_row = 5
+    pco_headers = ['Rank', 'Full Name', 'Unit', 'Designation', 'Contact Number']
+    for col_idx, col_name in enumerate(pco_headers, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+    current_row += 1
+    for p in all_personnel:
+        # include those with contact numbers; designation containing PCO prioritized
+        if p.contact_number or (p.designation and 'PCO' in p.designation):
+            fullname = f"{safe(p.last_name)}, {safe(p.first_name)}"
+            row = [safe(p.rank), fullname, safe(p.unit), safe(p.designation), safe(p.contact_number)]
+            for col_idx, val in enumerate(row, start=1):
+                c = ws.cell(row=current_row, column=col_idx)
+                c.value = val
+                c.border = thin
+            current_row += 1
+    for i, w in enumerate([14,26,16,22,18], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # Finalize stream
     stream = BytesIO()
     wb.save(stream)
     stream.seek(0)
-    return StreamingResponse(stream, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers={"Content-Disposition":"attachment;filename=form201_report.xlsx"})
+    safe_base = (file_name or 'form201_report').strip() or 'form201_report'
+    return StreamingResponse(stream, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers={"Content-Disposition": f"attachment;filename={safe_base}.xlsx"})
+
+
+@router.post('/form201-pdf')
+def generate_form201_pdf(
+    unit: Optional[str] = Form(None),
+    status: Optional[str] = Form(None),
+    prepared_by: str = Form(''),
+    noted_by: str = Form(''),
+    file_name: str = Form('form201_report'),
+    mask_birthdate: bool = Form(False),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate a PDF Form 201 personnel master list grouped by sections.
+    Columns (exact order): No., Badge No., Rank, Last Name, First Name, Middle Name, QLF,
+    Date of Reassignment, Designation, Date of Designation, Mandatory Training,
+    Specialized Course, Highest Eligibility, Contact Number, Birthdate, Religion
+    """
+    # Query personnel with filters
+    query = db.query(models.Personnel)
+    if unit and unit != 'All Units':
+        query = query.filter(models.Personnel.unit == unit)
+    if status and status != 'All Status':
+        query = query.filter(models.Personnel.status == status)
+
+    all_personnel = query.all()
+
+    # Group by section in required order
+    sections = ['Regional Office', 'Admin and HRDD Section', 'Intelligence Section']
+    grouped = {s: [] for s in sections}
+    # Those without a valid section go to Regional Office
+    for p in all_personnel:
+        key = p.section if p.section in sections else 'Regional Office'
+        grouped.setdefault(key, []).append(p)
+
+    # Build PDF
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), leftMargin=18, rightMargin=18, topMargin=18, bottomMargin=18)
+    elements = []
+    styles = getSampleStyleSheet()
+    header_style = ParagraphStyle('H', parent=styles['Heading2'], alignment=TA_CENTER, fontSize=12, leading=14)
+    small_bold = ParagraphStyle('SB', parent=styles['Normal'], fontSize=8, leading=10)
+    normal_small = ParagraphStyle('NS', parent=styles['Normal'], fontSize=7, leading=9)
+
+    # Title
+    elements.append(Paragraph('CRIMINAL INVESTIGATION AND DETECTION GROUP REGION 4A', header_style))
+    elements.append(Paragraph('FORM 201 PERSONNEL MASTER LIST', ParagraphStyle('sub', parent=styles['Normal'], alignment=TA_CENTER, fontSize=10)))
+    elements.append(Paragraph(f"(as of {datetime.utcnow().strftime('%B %d, %Y')})", ParagraphStyle('sub2', parent=styles['Normal'], alignment=TA_CENTER, fontSize=8)))
+    elements.append(Spacer(1, 12))
+
+    col_headers = ['No.', 'Badge No.', 'Rank', 'Last Name', 'First Name', 'Middle Name', 'QLF', 'Date of Reassignment', 'Designation', 'Date of Designation', 'Mandatory Training', 'Specialized Course', 'Highest Eligibility', 'Contact Number', 'Birthdate', 'Religion']
+
+    # Column widths (points) - tuned to fit landscape letter with margins
+    total_width = landscape(letter)[0] - 36  # left+right margins
+    # distribute widths, favoring name columns
+    col_widths = [28, 64, 48, 84, 84, 40, 44, 60, 64, 60, 80, 80, 64, 64, 56, 44]
+
+    for section in sections:
+        persons = grouped.get(section, [])
+        if not persons:
+            continue
+
+        # Section header
+        sect_para = Paragraph(f'<b>SECTION: {section}</b>', ParagraphStyle('sect', parent=styles['Normal'], fontSize=10))
+        elements.append(sect_para)
+        elements.append(Spacer(1, 6))
+
+        # Table data
+        data = [col_headers]
+        for idx, p in enumerate(persons, start=1):
+            # compile mandatory and specialized training titles
+            mandatory_titles = [t.title for t in (p.trainings or []) if t.category == 'mandatory']
+            specialized_titles = [t.title for t in (p.trainings or []) if t.category == 'specialized']
+
+            def safe(val):
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    return 'N/A'
+                return val
+
+            # format dates
+            def fmt_date(val):
+                if not val:
+                    return 'N/A'
+                try:
+                    return val.strftime('%Y-%m-%d')
+                except Exception:
+                    return str(val)
+
+            birth = '########' if mask_birthdate and p.birthdate else (fmt_date(p.birthdate) if p.birthdate else 'N/A')
+
+            row = [
+                idx,
+                safe(p.badge_number),
+                safe(p.rank),
+                safe(p.last_name),
+                safe(p.first_name),
+                safe(p.mi),
+                safe(p.qlf),
+                fmt_date(p.date_of_reassignment) if getattr(p, 'date_of_reassignment', None) else 'N/A',
+                safe(p.designation),
+                fmt_date(p.date_of_designation) if getattr(p, 'date_of_designation', None) else 'N/A',
+                '; '.join(mandatory_titles) if mandatory_titles else 'N/A',
+                '; '.join(specialized_titles) if specialized_titles else 'N/A',
+                safe(p.highest_eligibility),
+                safe(p.contact_number),
+                birth,
+                safe(p.religion),
+            ]
+            data.append(row)
+
+        t = Table(data, colWidths=col_widths, repeatRows=1)
+        style = TableStyle([
+            ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#366092')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 8),
+            ('ALIGN', (0,0), (0,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('FONTSIZE', (0,1), (-1,-1), 7),
+            ('LEFTPADDING', (0,0), (-1,-1), 4),
+            ('RIGHTPADDING', (0,0), (-1,-1), 4),
+        ])
+        t.setStyle(style)
+        elements.append(t)
+        elements.append(Spacer(1, 12))
+
+    # Footer prepared/noted
+    if prepared_by or noted_by:
+        elements.append(Paragraph(f'Prepared by: {prepared_by}', ParagraphStyle('foot', parent=styles['Normal'], fontSize=9)))
+        elements.append(Paragraph(f'Noted by: {noted_by}', ParagraphStyle('foot', parent=styles['Normal'], fontSize=9)))
+
+    doc.build(elements)
+    buffer.seek(0)
+    output_name = (file_name or 'form201_report').strip() or 'form201_report'
+    return StreamingResponse(buffer, media_type='application/pdf', headers={"Content-Disposition": f"attachment;filename={output_name}.pdf"})
