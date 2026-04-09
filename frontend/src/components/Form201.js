@@ -137,10 +137,34 @@ export default function Form201(){
   const [notedByName, setNotedByName] = useState('');
   const [notedByTitle, setNotedByTitle] = useState('');
   const [notedBySignature, setNotedBySignature] = useState(null);
-  const [authorizedValues, setAuthorizedValues] = useState('');
-  const [authorizedPCO, setAuthorizedPCO] = useState('');
-  const [authorizedPNCO, setAuthorizedPNCO] = useState('');
-  const [authorizedTotals, setAuthorizedTotals] = useState('');
+  
+  // AUT Values - PCO inputs
+  const [autPMGEN, setAutPMGEN] = useState('1');
+  const [autPBGEN, setAutPBGEN] = useState('1');
+  const [autPCOL, setAutPCOL] = useState('2');
+  const [autPLTCOL, setAutPLTCOL] = useState('3');
+  const [autPMAJ, setAutPMAJ] = useState('4');
+  const [autPCPT, setAutPCPT] = useState('5');
+  const [autPLT, setAutPLT] = useState('6');
+  const [autPCOSubtotal, setAutPCOSubtotal] = useState('22');
+  
+  // AUT Values - PNCO inputs
+  const [autPEMS, setAutPEMS] = useState('1');
+  const [autPCMS, setAutPCMS] = useState('2');
+  const [autPSMS, setAutPSMS] = useState('3');
+  const [autPMSG, setAutPMSG] = useState('4');
+  const [autPSSG, setAutPSSG] = useState('5');
+  const [autPCPL, setAutPCPL] = useState('6');
+  const [autPAT, setAutPAT] = useState('7');
+  const [autPNCOSubtotal, setAutPNCOSubtotal] = useState('28');
+  
+  // AUT Values - NUP input
+  const [autNUP, setAutNUP] = useState('10');
+  
+  // AUT Values - Totals
+  const [autTotalPersonnel, setAutTotalPersonnel] = useState('60');
+  const [autTotalUniformed, setAutTotalUniformed] = useState('50');
+  
   const [reportModalTab, setReportModalTab] = useState('report');
 
   const { bump } = useContext(RefreshContext);
@@ -848,20 +872,45 @@ export default function Form201(){
                   )}
 
                   {reportModalTab === 'auth' && (
-                    <div>
-                      <div className="mb-3">
-                        <label className="fw-bold">PCO Values</label>
-                        <input className="form-control" value={authorizedPCO} onChange={e=>setAuthorizedPCO(e.target.value)} placeholder='e.g. {"PCO":10, "PCOL":2} or comma-separated' />
+                    <div className="row">
+                      <div className="col-md-6">
+                        <h6 className="fw-bold mb-2">PCO AUT Inputs</h6>
+                        <div className="row g-2">
+                          <div className="col-6"><label className="small">PMGEN</label><input type="number" className="form-control form-control-sm" value={autPMGEN} onChange={e=>setAutPMGEN(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PBGEN</label><input type="number" className="form-control form-control-sm" value={autPBGEN} onChange={e=>setAutPBGEN(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PCOL</label><input type="number" className="form-control form-control-sm" value={autPCOL} onChange={e=>setAutPCOL(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PLTCOL</label><input type="number" className="form-control form-control-sm" value={autPLTCOL} onChange={e=>setAutPLTCOL(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PMAJ</label><input type="number" className="form-control form-control-sm" value={autPMAJ} onChange={e=>setAutPMAJ(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PCPT</label><input type="number" className="form-control form-control-sm" value={autPCPT} onChange={e=>setAutPCPT(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PLT</label><input type="number" className="form-control form-control-sm" value={autPLT} onChange={e=>setAutPLT(e.target.value)} /></div>
+                          <div className="col-6"><label className="small fw-bold">Subtotal PCO</label><input type="number" className="form-control form-control-sm fw-bold" value={autPCOSubtotal} onChange={e=>setAutPCOSubtotal(e.target.value)} /></div>
+                        </div>
+                        
+                        <h6 className="fw-bold mb-2 mt-3">NUP AUT Input</h6>
+                        <div className="row g-2">
+                          <div className="col-6"><label className="small">NUP</label><input type="number" className="form-control form-control-sm" value={autNUP} onChange={e=>setAutNUP(e.target.value)} /></div>
+                        </div>
                       </div>
-                      <div className="mb-3">
-                        <label className="fw-bold">PNCO Values</label>
-                        <input className="form-control" value={authorizedPNCO} onChange={e=>setAuthorizedPNCO(e.target.value)} placeholder='e.g. {"PNCO":5} or comma-separated' />
+                      
+                      <div className="col-md-6">
+                        <h6 className="fw-bold mb-2">PNCO AUT Inputs</h6>
+                        <div className="row g-2">
+                          <div className="col-6"><label className="small">PEMS</label><input type="number" className="form-control form-control-sm" value={autPEMS} onChange={e=>setAutPEMS(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PCMS</label><input type="number" className="form-control form-control-sm" value={autPCMS} onChange={e=>setAutPCMS(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PSMS</label><input type="number" className="form-control form-control-sm" value={autPSMS} onChange={e=>setAutPSMS(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PMSG</label><input type="number" className="form-control form-control-sm" value={autPMSG} onChange={e=>setAutPMSG(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PSSG</label><input type="number" className="form-control form-control-sm" value={autPSSG} onChange={e=>setAutPSSG(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PCPL</label><input type="number" className="form-control form-control-sm" value={autPCPL} onChange={e=>setAutPCPL(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">PAT</label><input type="number" className="form-control form-control-sm" value={autPAT} onChange={e=>setAutPAT(e.target.value)} /></div>
+                          <div className="col-6"><label className="small fw-bold">Subtotal PNCO</label><input type="number" className="form-control form-control-sm fw-bold" value={autPNCOSubtotal} onChange={e=>setAutPNCOSubtotal(e.target.value)} /></div>
+                        </div>
+                        
+                        <h6 className="fw-bold mb-2 mt-3">Totals AUT Inputs</h6>
+                        <div className="row g-2">
+                          <div className="col-6"><label className="small">Total Personnel</label><input type="number" className="form-control form-control-sm" value={autTotalPersonnel} onChange={e=>setAutTotalPersonnel(e.target.value)} /></div>
+                          <div className="col-6"><label className="small">Total Uniformed Personnel</label><input type="number" className="form-control form-control-sm" value={autTotalUniformed} onChange={e=>setAutTotalUniformed(e.target.value)} /></div>
+                        </div>
                       </div>
-                      <div className="mb-3">
-                        <label className="fw-bold">Totals</label>
-                        <input className="form-control" value={authorizedTotals} onChange={e=>setAuthorizedTotals(e.target.value)} placeholder='e.g. {"TOTAL_PERSONNEL":81} or a number' />
-                      </div>
-                      <div className="small text-muted">These values override defaults when provided. Provide as JSON string for full control.</div>
                     </div>
                   )}
                 </div>
@@ -889,16 +938,35 @@ export default function Form201(){
                       if (notedByName) fd.append('noted_by_name', notedByName);
                       if (notedByTitle) fd.append('noted_by_title', notedByTitle);
                       if (notedBySignature) fd.append('noted_by_signature', notedBySignature);
-                      // authorized values: prefer structured inputs
-                      if (authorizedPCO || authorizedPNCO || authorizedTotals) {
-                        const auth = {};
-                        if (authorizedPCO) auth.PCO = authorizedPCO;
-                        if (authorizedPNCO) auth.PNCO = authorizedPNCO;
-                        if (authorizedTotals) auth.TOTALS = authorizedTotals;
-                        fd.append('authorized_values', JSON.stringify(auth));
-                      } else if (authorizedValues) {
-                        fd.append('authorized_values', authorizedValues);
-                      }
+                      // authorized values (AUT) from modal
+                      const authData = {
+                        PCO: {
+                          PMGEN: autPMGEN,
+                          PBGEN: autPBGEN,
+                          PCOL: autPCOL,
+                          PLTCOL: autPLTCOL,
+                          PMAJ: autPMAJ,
+                          PCPT: autPCPT,
+                          PLT: autPLT,
+                          Subtotal: autPCOSubtotal
+                        },
+                        PNCO: {
+                          PEMS: autPEMS,
+                          PCMS: autPCMS,
+                          PSMS: autPSMS,
+                          PMSG: autPMSG,
+                          PSSG: autPSSG,
+                          PCPL: autPCPL,
+                          PAT: autPAT,
+                          Subtotal: autPNCOSubtotal
+                        },
+                        NUP: autNUP,
+                        Totals: {
+                          TotalPersonnel: autTotalPersonnel,
+                          TotalUniformed: autTotalUniformed
+                        }
+                      };
+                      fd.append('authorized_values', JSON.stringify(authData));
 
                       const res = await api.post('/api/personnel/report', fd, { responseType: 'blob' });
                       const disposition = res.headers && (res.headers['content-disposition'] || res.headers['Content-Disposition']);

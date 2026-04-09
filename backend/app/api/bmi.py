@@ -697,41 +697,23 @@ def bmi_report(
         q = q.filter(extract('month', models.BMIRecord.date_taken) == month, extract('year', models.BMIRecord.date_taken) == year)
     records = q.order_by(models.BMIRecord.date_taken.desc()).all()
 
-    # Filter BMI records to include only those whose personnel are ACTIVE by default
+    # Filter BMI records based on status parameters
     filtered_records = []
     for rec in records:
-        include = False
-        # Prefer explicit personnel_id linkage
-        if getattr(rec, 'personnel_id', None):
-            p = db.query(models.Personnel).filter(models.Personnel.id == rec.personnel_id).first()
-            if p and (p.status or '').upper() == 'ACTIVE':
-                include = True
-        else:
-            # Try to match by name: first token -> first name, last token -> last name
-            name = (rec.name or '').strip()
-            if name:
-                parts = name.upper().split()
-                if len(parts) >= 2:
-                    first = parts[0]
-                    last = parts[-1]
-                    p = db.query(models.Personnel).filter(models.Personnel.first_name == first, models.Personnel.last_name == last).first()
-                    if p and (p.status or '').upper() == 'ACTIVE':
-                        include = True
-        if include:
-            # Apply BMI-record status filtering
-            rec_status = (getattr(rec, 'status', None) or '').strip()
-            if status:
-                # If caller requested a specific BMI record status, enforce it
-                if rec_status.upper() == status.upper():
-                    filtered_records.append(rec)
-                else:
-                    # treat missing rec_status as 'Active' for comparison
-                    if not rec_status and status.upper() == 'ACTIVE':
-                        filtered_records.append(rec)
+        # Apply BMI-record status filtering
+        rec_status = (getattr(rec, 'status', None) or '').strip()
+        if status:
+            # If caller requested a specific BMI record status, enforce it
+            if rec_status.upper() == status.upper():
+                filtered_records.append(rec)
             else:
-                # Default behavior: include only records that are Active (or have no status set)
-                if not rec_status or rec_status.upper() == 'ACTIVE':
+                # treat missing rec_status as 'Active' for comparison
+                if not rec_status and status.upper() == 'ACTIVE':
                     filtered_records.append(rec)
+        else:
+            # Default behavior: include only records that are Active (or have no status set)
+            if not rec_status or rec_status.upper() == 'ACTIVE':
+                filtered_records.append(rec)
 
     records = filtered_records
     safe_base_name = safe_filename(file_name, 'bmi_report')
@@ -1247,6 +1229,51 @@ def get_distinct_personnel_bmi(db: Session = Depends(get_db)):
         })
     
     return sorted(result, key=lambda x: (x['name'] or '').lower())
+
+
+@router.get('/counts')
+def bmi_counts(db: Session = Depends(get_db)):
+    """
+    Get BMI record counts per unit for the current month and total counts.
+    """
+    from sqlalchemy import extract, func
+    from datetime import datetime
+    
+    now = datetime.utcnow()
+    current_month = now.month
+    current_year = now.year
+    
+    units = ['RHQ', 'Cavite', 'Laguna', 'Batangas', 'Rizal', 'Quezon']
+    result = {}
+    
+    for unit in units:
+        # Count records for this unit in current month
+        monthly_count = db.query(models.BMIRecord).filter(
+            models.BMIRecord.unit == unit,
+            extract('month', models.BMIRecord.date_taken) == current_month,
+            extract('year', models.BMIRecord.date_taken) == current_year
+        ).count()
+        
+        # Count total records for this unit
+        total_count = db.query(models.BMIRecord).filter(
+            models.BMIRecord.unit == unit
+        ).count()
+        
+        result[unit] = {
+            'monthly': monthly_count,
+            'total': total_count
+        }
+    
+    # Get total monthly count across all units
+    total_monthly = db.query(models.BMIRecord).filter(
+        extract('month', models.BMIRecord.date_taken) == current_month,
+        extract('year', models.BMIRecord.date_taken) == current_year
+    ).count()
+    
+    result['total_monthly'] = total_monthly
+    result['current_month'] = now.strftime('%B %Y')
+    
+    return result
 
 
 # ==================== BMI UPDATE ENDPOINT (Version-Preserving) ====================

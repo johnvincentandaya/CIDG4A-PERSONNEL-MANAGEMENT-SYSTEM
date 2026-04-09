@@ -798,86 +798,164 @@ def personnel_report(
     unit: Optional[str] = Form(None),
     status: Optional[str] = Form(None),
     report_type: str = Form('excel'),
-    prepared_by: str = Form(''),
-    noted_by: str = Form(''),
     file_name: str = Form('form201_report'),
+    # New parameters from Generate Modal
+    as_of_date: Optional[str] = Form(None),
+    scope: Optional[str] = Form(None),
+    specific_unit: Optional[str] = Form(None),
+    # Signatories
+    prepared_by_name: Optional[str] = Form(None),
+    prepared_by_title: Optional[str] = Form(None),
+    verified_by_name: Optional[str] = Form(None),
+    verified_by_title: Optional[str] = Form(None),
+    noted_by_name: Optional[str] = Form(None),
+    noted_by_title: Optional[str] = Form(None),
+    # Authorized values from modal
+    authorized_values: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     """
-    Generate Form 201 Excel grouped by sections with exact columns.
-    Columns (exact order): No., Badge Number, Rank, Last Name, First Name, Middle Name, QLF,
-    Date of Reassignment, Designation, Date of Designation, Mandatory Training,
-    Specialized Course, Highest Eligibility, Contact Number, Birthdate, Religion
+    Generate comprehensive Form 201 Excel report with all tabs.
+    Each tab has its own sorting and layout rules as specified.
     """
     from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
     from openpyxl.utils import get_column_letter
+    import json
+
+    # Parse authorized values from modal
+    aut_values = {'PCO': {}, 'PNCO': {}, 'NUP': {}, 'Totals': {}}
+    if authorized_values:
+        try:
+            aut_values = json.loads(authorized_values)
+        except:
+            pass
+
+    # Default as of date
+    report_date = as_of_date or datetime.utcnow().strftime('%Y-%m-%d')
+    try:
+        display_date = datetime.strptime(report_date, '%Y-%m-%d').strftime('%B %d, %Y')
+    except:
+        display_date = datetime.utcnow().strftime('%B %d, %Y')
 
     # Query personnel with filters
     q = db.query(models.Personnel)
-    if unit and unit != 'All Units':
+    if scope == 'Specific Unit' and specific_unit:
+        q = q.filter(models.Personnel.unit == specific_unit)
+    elif unit and unit != 'All Units':
         q = q.filter(models.Personnel.unit == unit)
     if status and status != 'All Status':
         q = q.filter(models.Personnel.status == status)
 
-    all_personnel = q.order_by(models.Personnel.last_name).all()
+    all_personnel = q.all()
+    
+    # Debug: Check the type and content of all_personnel
+    print(f"DEBUG all_personnel type: {type(all_personnel)}, length: {len(all_personnel) if all_personnel else 0}")
+    if all_personnel:
+        print(f"DEBUG first item type: {type(all_personnel[0])}")
+        print(f"DEBUG first item: {all_personnel[0]}")
+        if hasattr(all_personnel[0], '__dict__'):
+            print(f"DEBUG first item dict: {all_personnel[0].__dict__}")
 
     def safe(v):
         if v is None:
-            return 'N/A'
+            return ''
         if isinstance(v, str) and not v.strip():
-            return 'N/A'
+            return ''
         return v
 
     def fmt_date(v):
         if not v:
-            return 'N/A'
+            return ''
         try:
             return v.strftime('%Y-%m-%d')
         except Exception:
             return str(v)
 
+    # RANK ORDER for sorting uniformed personnel (highest to lowest)
+    RANK_ORDER = {
+        'PGEN': 1, 'PLTGEN': 2, 'PMGEN': 3, 'PBGEN': 4, 'PCOL': 5,
+        'PLTCOL': 6, 'PMAJ': 7, 'PCPT': 8, 'PLT': 9,
+        'PEMS': 10, 'PCMS': 11, 'PSMS': 12, 'PMSG': 13, 'PSSG': 14,
+        'PCPL': 15, 'PAT': 16
+    }
+
+    def rank_sort_key(p):
+        rank = (p.rank or '').upper()
+        return (RANK_ORDER.get(rank, 999), p.last_name or '', p.first_name or '')
+
+    def entry_number_sort_key(p):
+        return (p.nup_entry_number or 999999, p.last_name or '', p.first_name or '')
+
+    def alpha_sort_key(p):
+        return (p.last_name or '', p.first_name or '')
+
     wb = Workbook()
     sheet_names = [
-        'LIST OF NUP (NON-UNIFORMED PERSONNEL)',
-        'LIST OF UP (UNIFORMED PERSONNEL)',
+        'LIST OF NUP',
+        'LIST OF U.P',
         'TERRITORIAL STRENGTH',
         'RANK STRUCTURE',
         'RANK PROFILE',
+        'ALPHA LIST',
         'DISPOSITION OF TROOPS',
         'PERSONNEL FILL-UP',
         'KEY OFFICERS',
         'STATION LIST',
         'RANK INVENTORY',
-        'CIDG RFU4A LIST OF PCOs AND CONTACT NUMBERS',
+        'CIDG RFU4A PCO CONTACT LIST',
     ]
 
     thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     header_fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
 
-    # Prepare helper to create simple titled header
-    def write_sheet_title(ws, title_text):
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
+    # Helper to create titled header with as-of date
+    def write_sheet_title(ws, title_text, cols=10):
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=cols)
         c = ws.cell(row=1, column=1)
         c.value = 'CRIMINAL INVESTIGATION AND DETECTION GROUP REGION 4A'
         c.font = Font(bold=True, size=12)
         c.alignment = Alignment(horizontal='center', vertical='center')
-        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=10)
+        ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=cols)
         c2 = ws.cell(row=2, column=1)
         c2.value = title_text
         c2.font = Font(bold=True, size=11)
         c2.alignment = Alignment(horizontal='center', vertical='center')
-        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=10)
+        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=cols)
         c3 = ws.cell(row=3, column=1)
-        c3.value = f"(as of {datetime.utcnow().strftime('%B %d, %Y')})"
+        c3.value = f"(as of {display_date})"
         c3.font = Font(italic=True, size=10)
         c3.alignment = Alignment(horizontal='center', vertical='center')
 
-    # 1) LIST OF NUP
+    # Helper to write signature blocks
+    def write_signatures(ws, start_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title):
+        sig_row = start_row
+        # Prepared by
+        ws.cell(row=sig_row, column=1).value = 'Prepared by:'
+        ws.cell(row=sig_row, column=1).font = Font(bold=True)
+        ws.cell(row=sig_row+1, column=1).value = prepared_by_name or ''
+        ws.cell(row=sig_row+2, column=1).value = prepared_by_title or ''
+        
+        # Verified by
+        ws.cell(row=sig_row, column=4).value = 'Verified Correct by:'
+        ws.cell(row=sig_row, column=4).font = Font(bold=True)
+        ws.cell(row=sig_row+1, column=4).value = verified_by_name or ''
+        ws.cell(row=sig_row+2, column=4).value = verified_by_title or ''
+        
+        # Noted by
+        ws.cell(row=sig_row, column=7).value = 'Noted by:'
+        ws.cell(row=sig_row, column=7).font = Font(bold=True)
+        ws.cell(row=sig_row+1, column=7).value = noted_by_name or ''
+        ws.cell(row=sig_row+2, column=7).value = noted_by_title or ''
+
+    # ============================================================
+    # TAB 1: LIST OF NUP - Sorted by Entry Number
+    # ============================================================
     ws = wb.active
     ws.title = sheet_names[0]
-    write_sheet_title(ws, sheet_names[0])
+    write_sheet_title(ws, sheet_names[0], 8)
     current_row = 5
-    headers = ['No.', 'Badge Number', 'Rank', 'Last Name', 'First Name', 'Middle Name', 'Suffix', 'Unit', 'Designation', 'Contact Number', 'Status']
+    
+    headers = ['Entry No.', 'Rank', 'Last', 'First', 'Middle', 'Q', 'Office']
     for col_idx, col_name in enumerate(headers, start=1):
         cell = ws.cell(row=current_row, column=col_idx)
         cell.value = col_name
@@ -886,23 +964,20 @@ def personnel_report(
         cell.border = thin
         cell.alignment = Alignment(horizontal='center', vertical='center')
     current_row += 1
-    idx = 0
-    for p in all_personnel:
-        if (p.status or '').upper() != 'NUP':
-            continue
-        idx += 1
+    
+    # Filter NUP and sort by entry number
+    nup_personnel = [p for p in all_personnel if (p.status or '').upper() == 'NUP']
+    nup_personnel.sort(key=entry_number_sort_key)
+    
+    for idx, p in enumerate(nup_personnel, start=1):
         row = [
-            idx,
-            safe(p.badge_number),
-            safe(p.rank),
-            safe(p.last_name),
-            safe(p.first_name),
-            safe(p.mi),
-            safe(p.suffix),
-            safe(p.unit),
-            safe(p.designation),
-            safe(p.contact_number),
-            safe(p.status),
+            p.nup_entry_number or idx,
+            safe(p.nup_rank) or safe(p.rank),
+            safe(p.last_name).upper(),
+            safe(p.first_name).upper(),
+            safe(p.mi).upper(),
+            safe(p.suffix).upper(),
+            safe(p.unit).upper(),
         ]
         for col_idx, val in enumerate(row, start=1):
             c = ws.cell(row=current_row, column=col_idx)
@@ -910,21 +985,23 @@ def personnel_report(
             c.border = thin
             c.alignment = Alignment(horizontal='left', vertical='center')
         current_row += 1
-    # footer
-    footer_r = current_row + 2
-    ws.cell(row=footer_r, column=1).value = 'Prepared by:'
-    ws.cell(row=footer_r+1, column=1).value = prepared_by or ''
-    ws.cell(row=footer_r, column=6).value = 'Noted by:'
-    ws.cell(row=footer_r+1, column=6).value = noted_by or ''
-    # column widths for sheet 1
-    widths = [6, 14, 12, 18, 18, 12, 10, 14, 18, 16, 12]
-    for i, w in enumerate(widths, start=1):
+    
+    # Signatures
+    current_row += 2
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    # Column widths
+    for i, w in enumerate([10, 12, 18, 18, 12, 8, 18], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    # 2) LIST OF UP
+    # ============================================================
+    # TAB 2: LIST OF U.P - Sorted by rank hierarchy
+    # ============================================================
     ws = wb.create_sheet(title=sheet_names[1])
-    write_sheet_title(ws, sheet_names[1])
+    write_sheet_title(ws, sheet_names[1], 10)
     current_row = 5
+    
+    headers = ['Entry No.', 'Rank', 'Last', 'First', 'Middle', 'Q', 'Badge No.', 'Office']
     for col_idx, col_name in enumerate(headers, start=1):
         cell = ws.cell(row=current_row, column=col_idx)
         cell.value = col_name
@@ -933,23 +1010,21 @@ def personnel_report(
         cell.border = thin
         cell.alignment = Alignment(horizontal='center', vertical='center')
     current_row += 1
-    idx = 0
-    for p in all_personnel:
-        if (p.status or '').upper() != 'UP':
-            continue
-        idx += 1
+    
+    # Filter UP and sort by rank
+    up_personnel = [p for p in all_personnel if (p.status or '').upper() == 'UP']
+    up_personnel.sort(key=rank_sort_key)
+    
+    for idx, p in enumerate(up_personnel, start=1):
         row = [
             idx,
-            safe(p.badge_number),
-            safe(p.rank),
-            safe(p.last_name),
-            safe(p.first_name),
-            safe(p.mi),
-            safe(p.suffix),
-            safe(p.unit),
-            safe(p.designation),
-            safe(p.contact_number),
-            safe(p.status),
+            safe(p.rank).upper(),
+            safe(p.last_name).upper(),
+            safe(p.first_name).upper(),
+            safe(p.mi).upper(),
+            safe(p.suffix).upper(),
+            safe(p.badge_number).upper(),
+            safe(p.unit).upper(),
         ]
         for col_idx, val in enumerate(row, start=1):
             c = ws.cell(row=current_row, column=col_idx)
@@ -957,164 +1032,912 @@ def personnel_report(
             c.border = thin
             c.alignment = Alignment(horizontal='left', vertical='center')
         current_row += 1
-    footer_r = current_row + 2
-    ws.cell(row=footer_r, column=1).value = 'Prepared by:'
-    ws.cell(row=footer_r+1, column=1).value = prepared_by or ''
-    ws.cell(row=footer_r, column=6).value = 'Noted by:'
-    ws.cell(row=footer_r+1, column=6).value = noted_by or ''
-    for i, w in enumerate(widths, start=1):
+    
+    # Signatures
+    current_row += 2
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    for i, w in enumerate([10, 12, 18, 18, 12, 8, 14, 18], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    # 3) TERRITORIAL STRENGTH
+    # ============================================================
+    # TAB 3: TERRITORIAL STRENGTH
+    # ============================================================
     ws = wb.create_sheet(title=sheet_names[2])
-    write_sheet_title(ws, sheet_names[2])
-    units = sorted({(p.unit or 'N/A') for p in all_personnel})
+    write_sheet_title(ws, sheet_names[2], 5)
     current_row = 5
-    ws.cell(row=current_row, column=1).value = 'Unit'
-    ws.cell(row=current_row, column=2).value = 'Personnel Count'
-    ws.cell(row=current_row, column=1).font = Font(bold=True)
-    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    
+    headers = ['Office/Unit', 'PCOs', 'PNCOs', 'NUPs', 'Total']
+    for col_idx, col_name in enumerate(headers, start=1):
+        cell = ws.cell(row=current_row, column=col_idx)
+        cell.value = col_name
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = header_fill
+        cell.border = thin
+        cell.alignment = Alignment(horizontal='center', vertical='center')
     current_row += 1
-    for u in units:
-        count = sum(1 for p in all_personnel if (p.unit or '').upper() == (u or '').upper())
-        ws.cell(row=current_row, column=1).value = u
-        ws.cell(row=current_row, column=2).value = count
+    
+    # Fixed units order
+    unit_order = ['RFU4A HQS', 'CAVITE PFU', 'LAGUNA PFU', 'BATANGAS PFU', 'RIZAL PFU', 'QUEZON PFU']
+    
+    # Map unit names
+    unit_map = {
+        'RHQ': 'RFU4A HQS', 'CAVITE': 'CAVITE PFU', 'LAGUNA': 'LAGUNA PFU',
+        'BATANGAS': 'BATANGAS PFU', 'RIZAL': 'RIZAL PFU', 'QUEZON': 'QUEZON PFU'
+    }
+    
+    totals = {'PCOs': 0, 'PNCOs': 0, 'NUPs': 0, 'Total': 0}
+    
+    for unit_name in unit_order:
+        # Reverse map for query
+        rev_map = {v: k for k, v in unit_map.items()}
+        db_unit = rev_map.get(unit_name, unit_name)
+        
+        unit_personnel = [p for p in all_personnel if (p.unit or '').upper() == db_unit.upper()]
+        
+        pco_count = sum(1 for p in unit_personnel if p.status and p.status.upper() == 'UP' and p.rank in ['PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT', 'PMGEN', 'PBGEN'])
+        pnco_count = sum(1 for p in unit_personnel if p.status and p.status.upper() == 'UP' and p.rank in ['PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT'])
+        nup_count = sum(1 for p in unit_personnel if p.status and p.status.upper() == 'NUP')
+        
+        total = pco_count + pnco_count + nup_count
+        
+        row = [unit_name, pco_count, pnco_count, nup_count, total]
+        for col_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+            c.alignment = Alignment(horizontal='center' if col_idx > 1 else 'left', vertical='center')
+        
+        totals['PCOs'] += pco_count
+        totals['PNCOs'] += pnco_count
+        totals['NUPs'] += nup_count
+        totals['Total'] += total
         current_row += 1
-    ws.column_dimensions[get_column_letter(1)].width = 30
-    ws.column_dimensions[get_column_letter(2)].width = 16
+    
+    # Grand Total row
+    ws.cell(row=current_row, column=1).value = 'GRAND TOTAL'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    for col in range(2, 6):
+        ws.cell(row=current_row, column=col).value = totals[['PCOs', 'PNCOs', 'NUPs', 'Total'][col-2]]
+        ws.cell(row=current_row, column=col).font = Font(bold=True)
+        ws.cell(row=current_row, column=col).border = thin
+    current_row += 2
+    
+    # Signatures
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    for i, w in enumerate([20, 10, 10, 10, 12], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
 
-    # 4) RANK STRUCTURE
+    # ============================================================
+    # TAB 4: RANK STRUCTURE (AUT vs ACT vs VAR)
+    # ============================================================
     ws = wb.create_sheet(title=sheet_names[3])
-    write_sheet_title(ws, sheet_names[3])
+    write_sheet_title(ws, sheet_names[3], 6)
     current_row = 5
-    ws.cell(row=current_row, column=1).value = 'Rank'
-    ws.cell(row=current_row, column=2).value = 'Count'
+    
+    # Headers
+    headers = ['Rank', 'AUT', 'ACT', 'VAR']
+    for col_idx, col_name in enumerate(headers, start=1):
+        cell = ws.cell(row=current_row, column=col_idx)
+        cell.value = col_name
+        cell.font = Font(bold=True, color='FFFFFF')
+        cell.fill = header_fill
+        cell.border = thin
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    current_row += 1
+    
+    # Get AUT values - handle both object format and plain value format
+    pco_aut = aut_values.get('PCO', {})
+    if isinstance(pco_aut, str):
+        pco_aut = {}
+    pnco_aut = aut_values.get('PNCO', {})
+    if isinstance(pnco_aut, str):
+        pnco_aut = {}
+    nup_aut = aut_values.get('NUP', 0)
+    # Handle NUP - could be plain value or nested object
+    if isinstance(nup_aut, dict):
+        nup_aut = nup_aut.get('NUP', nup_aut.get('NUP', 0))
+    if isinstance(nup_aut, str):
+        nup_aut = int(nup_aut) if nup_aut else 0
+    totals_aut = aut_values.get('Totals', {})
+    if isinstance(totals_aut, str):
+        totals_aut = {}
+    
+    # PCO ranks in order
+    pco_ranks = ['PMGEN', 'PBGEN', 'PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT']
+    pco_actuals = {r: 0 for r in pco_ranks}
+    
+    for p in all_personnel:
+        if p.status and p.status.upper() == 'UP':
+            rank = (p.rank or '').upper()
+            if rank in pco_ranks:
+                pco_actuals[rank] = pco_actuals.get(rank, 0) + 1
+    
+    # Write PCO ranks
+    for rank in pco_ranks:
+        aut_val = int(pco_aut.get(rank, 0))
+        act_val = pco_actuals.get(rank, 0)
+        var_val = act_val - aut_val
+        
+        row = [rank, aut_val, act_val, var_val]
+        for col_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+            c.alignment = Alignment(horizontal='center', vertical='center')
+        current_row += 1
+    
+    # PCO Subtotal
+    pco_aut_sub = sum(int(pco_aut.get(r, 0)) for r in pco_ranks)
+    pco_act_sub = sum(pco_actuals.values())
+    ws.cell(row=current_row, column=1).value = 'Sub-Total (PCOs)'
     ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = pco_aut_sub
     ws.cell(row=current_row, column=2).font = Font(bold=True)
-    current_row += 1
-    ranks = sorted({(p.rank or 'N/A') for p in all_personnel})
-    for r in ranks:
-        cnt = sum(1 for p in all_personnel if (p.rank or '').upper() == (r or '').upper())
-        ws.cell(row=current_row, column=1).value = r
-        ws.cell(row=current_row, column=2).value = cnt
+    ws.cell(row=current_row, column=3).value = pco_act_sub
+    ws.cell(row=current_row, column=3).font = Font(bold=True)
+    ws.cell(row=current_row, column=4).value = pco_act_sub - pco_aut_sub
+    ws.cell(row=current_row, column=4).font = Font(bold=True)
+    for col in range(1, 5):
+        ws.cell(row=current_row, column=col).border = thin
+    current_row += 2
+    
+    # PNCO ranks in order
+    pnco_ranks = ['PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT']
+    pnco_actuals = {r: 0 for r in pnco_ranks}
+    
+    for p in all_personnel:
+        if p.status and p.status.upper() == 'UP':
+            rank = (p.rank or '').upper()
+            if rank in pnco_ranks:
+                pnco_actuals[rank] = pnco_actuals.get(rank, 0) + 1
+    
+    # Write PNCO ranks
+    for rank in pnco_ranks:
+        aut_val = int(pnco_aut.get(rank, 0))
+        act_val = pnco_actuals.get(rank, 0)
+        var_val = act_val - aut_val
+        
+        row = [rank, aut_val, act_val, var_val]
+        for col_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+            c.alignment = Alignment(horizontal='center', vertical='center')
         current_row += 1
-    ws.column_dimensions[get_column_letter(1)].width = 30
-    ws.column_dimensions[get_column_letter(2)].width = 12
+    
+    # PNCO Subtotal
+    pnco_aut_sub = sum(int(pnco_aut.get(r, 0)) for r in pnco_ranks)
+    pnco_act_sub = sum(pnco_actuals.values())
+    ws.cell(row=current_row, column=1).value = 'Sub-Total (PNCOs)'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = pnco_aut_sub
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    ws.cell(row=current_row, column=3).value = pnco_act_sub
+    ws.cell(row=current_row, column=3).font = Font(bold=True)
+    ws.cell(row=current_row, column=4).value = pnco_act_sub - pnco_aut_sub
+    ws.cell(row=current_row, column=4).font = Font(bold=True)
+    for col in range(1, 5):
+        ws.cell(row=current_row, column=col).border = thin
+    current_row += 2
+    
+    # NUP row
+    nup_act = sum(1 for p in all_personnel if p.status and p.status.upper() == 'NUP')
+    nup_aut_val = int(nup_aut) if nup_aut else 0
+    ws.cell(row=current_row, column=1).value = 'NUP'
+    ws.cell(row=current_row, column=2).value = nup_aut_val
+    ws.cell(row=current_row, column=3).value = nup_act
+    ws.cell(row=current_row, column=4).value = nup_act - nup_aut_val
+    for col in range(1, 5):
+        ws.cell(row=current_row, column=col).border = thin
+    current_row += 2
+    
+    # Total Uniformed Personnel
+    total_uniformed_act = pco_act_sub + pnco_act_sub
+    total_uniformed_aut = totals_aut.get('TotalUniformed', total_uniformed_act)
+    if isinstance(total_uniformed_aut, str):
+        total_uniformed_aut = int(total_uniformed_aut) if total_uniformed_aut.isdigit() else total_uniformed_act
+    ws.cell(row=current_row, column=1).value = 'Total Uniformed Personnel'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = total_uniformed_aut
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    ws.cell(row=current_row, column=3).value = total_uniformed_act
+    ws.cell(row=current_row, column=3).font = Font(bold=True)
+    ws.cell(row=current_row, column=4).value = total_uniformed_act - total_uniformed_aut
+    ws.cell(row=current_row, column=4).font = Font(bold=True)
+    for col in range(1, 5):
+        ws.cell(row=current_row, column=col).border = thin
+    
+    # Note: No signatories for Rank Structure
+    for i, w in enumerate([20, 10, 10, 10], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
 
-    # 5) RANK PROFILE (list people by rank)
+    # 5) RANK PROFILE (personnel distribution by rank per sub-unit)
     ws = wb.create_sheet(title=sheet_names[4])
-    write_sheet_title(ws, sheet_names[4])
+    write_sheet_title(ws, sheet_names[4], 20)
     current_row = 5
-    headers_profile = ['Rank', 'Badge Number', 'Last Name', 'First Name', 'Middle Name', 'Unit', 'Designation']
-    for col_idx, col_name in enumerate(headers_profile, start=1):
+    
+    # Sub-units in order
+    sub_units = ['RFU4A HQS', 'CAV PFU', 'LAG PFU', 'BATS PFU', 'RIZAL PFU', 'QZN PFU']
+    unit_map = {'RHQ': 'RFU4A HQS', 'CAVITE': 'CAV PFU', 'LAGUNA': 'LAG PFU', 
+                'BATANGAS': 'BATS PFU', 'RIZAL': 'RIZAL PFU', 'QUEZON': 'QZN PFU'}
+    rev_map = {v: k for k, v in unit_map.items()}
+    
+    # Headers
+    headers = ['Unit', 'PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT', 'Actual PCO', 
+               'PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT', 'Actual PNCO',
+               'Sub-Total Uniformed', 'Actual NUP', 'Total']
+    for col_idx, col_name in enumerate(headers, start=1):
         c = ws.cell(row=current_row, column=col_idx)
         c.value = col_name
         c.font = Font(bold=True, color='FFFFFF')
         c.fill = header_fill
         c.border = thin
+        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     current_row += 1
-    for p in sorted(all_personnel, key=lambda x: (x.rank or '', x.last_name or '')):
-        row = [safe(p.rank), safe(p.badge_number), safe(p.last_name), safe(p.first_name), safe(p.mi), safe(p.unit), safe(p.designation)]
+    
+    pco_ranks = ['PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT']
+    pnco_ranks = ['PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT']
+    
+    unit_totals = []
+    for sub_unit in sub_units:
+        db_unit = rev_map.get(sub_unit, sub_unit)
+        unit_personnel = [p for p in all_personnel if (p.unit or '').upper() == db_unit.upper()]
+        
+        pco_counts = {r: sum(1 for p in unit_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == r) for r in pco_ranks}
+        pnco_counts = {r: sum(1 for p in unit_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == r) for r in pnco_ranks}
+        
+        actual_pco = sum(pco_counts.values())
+        actual_pnco = sum(pnco_counts.values())
+        sub_total_uniformed = actual_pco + actual_pnco
+        actual_nup = sum(1 for p in unit_personnel if p.status and p.status.upper() == 'NUP')
+        total = sub_total_uniformed + actual_nup
+        
+        row = [sub_unit] + [pco_counts[r] for r in pco_ranks] + [actual_pco] + \
+              [pnco_counts[r] for r in pnco_ranks] + [actual_pnco] + [sub_total_uniformed, actual_nup, total]
+        
         for col_idx, val in enumerate(row, start=1):
             c = ws.cell(row=current_row, column=col_idx)
             c.value = val
             c.border = thin
+            c.alignment = Alignment(horizontal='center', vertical='center')
+        
+        unit_totals.append({'pco': actual_pco, 'pnco': actual_pnco, 'uniformed': sub_total_uniformed, 'nup': actual_nup, 'total': total})
         current_row += 1
-    for i, w in enumerate([20,14,18,18,12,16,24], start=1):
+    
+    # TOTAL row
+    ws.cell(row=current_row, column=1).value = 'TOTAL'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    for col in range(2, 18):
+        ws.cell(row=current_row, column=col).font = Font(bold=True)
+        ws.cell(row=current_row, column=col).border = thin
+    
+    total_pco = sum(t['pco'] for t in unit_totals)
+    total_pnco = sum(t['pnco'] for t in unit_totals)
+    total_uniformed = sum(t['uniformed'] for t in unit_totals)
+    total_nup = sum(t['nup'] for t in unit_totals)
+    grand_total = sum(t['total'] for t in unit_totals)
+    
+    ws.cell(row=current_row, column=7).value = total_pco
+    ws.cell(row=current_row, column=15).value = total_pnco
+    ws.cell(row=current_row, column=16).value = total_uniformed
+    ws.cell(row=current_row, column=17).value = total_nup
+    ws.cell(row=current_row, column=18).value = grand_total
+    
+    # Signatures
+    current_row += 2
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    for i, w in enumerate([15, 8, 8, 8, 8, 8, 10, 8, 8, 8, 8, 8, 8, 8, 10, 12, 10, 10], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    # 6) DISPOSITION OF TROOPS (units x statuses)
+    # ============================================================
+    # TAB 6: ALPHA LIST - Alphabetical by last name
+    # ============================================================
     ws = wb.create_sheet(title=sheet_names[5])
-    write_sheet_title(ws, sheet_names[5])
+    write_sheet_title(ws, sheet_names[5], 12)
     current_row = 5
-    statuses = sorted({(p.status or 'N/A') for p in all_personnel})
-    header = ['Unit', 'Total'] + list(statuses)
-    for col_idx, col_name in enumerate(header, start=1):
+    
+    headers = ['Entry Number', 'Account Number', 'Rank', 'Last', 'First', 'Middle', 'Q', 
+               'Badge No.', 'Contact Number', 'Office', 'Date of Birth', 'Religion']
+    for col_idx, col_name in enumerate(headers, start=1):
         c = ws.cell(row=current_row, column=col_idx)
         c.value = col_name
         c.font = Font(bold=True, color='FFFFFF')
         c.fill = header_fill
         c.border = thin
+        c.alignment = Alignment(horizontal='center', vertical='center')
     current_row += 1
-    units_list = sorted({(p.unit or 'N/A') for p in all_personnel})
-    for u in units_list:
-        totals = [u, sum(1 for p in all_personnel if (p.unit or '').upper() == (u or '').upper())]
-        for s in statuses:
-            totals.append(sum(1 for p in all_personnel if (p.unit or '').upper() == (u or '').upper() and (p.status or '').upper() == (s or '').upper()))
-        for col_idx, val in enumerate(totals, start=1):
-            c = ws.cell(row=current_row, column=col_idx)
-            c.value = val
-            c.border = thin
-        current_row += 1
-    for i in range(1, len(header) + 1):
-        ws.column_dimensions[get_column_letter(i)].width = 16
-
-    # 7) PERSONNEL FILL-UP (full listing)
-    ws = wb.create_sheet(title=sheet_names[6])
-    write_sheet_title(ws, sheet_names[6])
-    current_row = 5
-    headers_fillup = ['No.', 'Badge Number', 'Rank', 'Last Name', 'First Name', 'MI', 'Unit', 'Designation', 'Contact', 'Status']
-    for col_idx, col_name in enumerate(headers_fillup, start=1):
-        c = ws.cell(row=current_row, column=col_idx)
-        c.value = col_name
-        c.font = Font(bold=True, color='FFFFFF')
-        c.fill = header_fill
-        c.border = thin
-    current_row += 1
-    for idx, p in enumerate(all_personnel, start=1):
-        row = [idx, safe(p.badge_number), safe(p.rank), safe(p.last_name), safe(p.first_name), safe(p.mi), safe(p.unit), safe(p.designation), safe(p.contact_number), safe(p.status)]
+    
+    # Sort alphabetically by last name
+    alpha_personnel = sorted(all_personnel, key=alpha_sort_key)
+    
+    for idx, p in enumerate(alpha_personnel, start=1):
+        row = [
+            idx,
+            safe(p.badge_number),
+            safe(p.rank).upper(),
+            safe(p.last_name).upper(),
+            safe(p.first_name).upper(),
+            safe(p.mi).upper(),
+            safe(p.suffix).upper(),
+            safe(p.badge_number).upper(),
+            safe(p.contact_number),
+            safe(p.unit).upper(),
+            fmt_date(p.birthdate),
+            safe(p.religion).upper(),
+        ]
         for col_idx, val in enumerate(row, start=1):
             c = ws.cell(row=current_row, column=col_idx)
             c.value = val
             c.border = thin
+            c.alignment = Alignment(horizontal='left', vertical='center')
         current_row += 1
-    for i, w in enumerate([6,14,12,18,18,10,16,22,16,12], start=1):
+    
+    # Signatures
+    current_row += 2
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    for i, w in enumerate([12, 14, 10, 18, 18, 12, 8, 12, 14, 14, 14, 14], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    # 8) KEY OFFICERS (select senior ranks)
-    ws = wb.create_sheet(title=sheet_names[7])
-    write_sheet_title(ws, sheet_names[7])
+    # ============================================================
+    # TAB 7: DISPOSITION OF TROOPS
+    # ============================================================
+    ws = wb.create_sheet(title=sheet_names[6])
+    write_sheet_title(ws, sheet_names[6], 18)
     current_row = 5
-    kheaders = ['Rank', 'Full Name', 'Badge Number', 'Unit', 'Designation', 'Contact']
+    
+    # Headers
+    dispo_headers = ['No.', 'Badge No.', 'Rank', 'Last', 'First', 'Middle', 'Qualifier', 
+                      'Date of Reassignment', 'Designation', 'Date of Designation',
+                      'Mandatory Training', 'Specialized Training', 'Highest Eligibility',
+                      'Contact Number', 'Birthdate', 'Religion']
+    
+    # Sections in order
+    sections = [
+        'OFFICE OF THE REGIONAL CHIEF',
+        'ADMIN AND HRDD SECTION',
+        'INTELLIGENCE SECTION',
+        'INVESTIGATION SECTION',
+        'OPERATION & PCR SECTION',
+        'CAVITE',
+        'LAGUNA',
+        'BATANGAS',
+        'RIZAL',
+        'QUEZON'
+    ]
+    
+    section_map = {
+        'OFFICE OF THE REGIONAL CHIEF': 'Regional Office',
+        'ADMIN AND HRDD SECTION': 'Admin and HRDD Section',
+        'INTELLIGENCE SECTION': 'Intelligence Section',
+        'INVESTIGATION SECTION': 'Investigation Section',
+        'OPERATION & PCR SECTION': 'Operation & PCR Section',
+    }
+    
+    grand_pco_act = 0
+    grand_pnco_act = 0
+    grand_nup_act = 0
+    
+    for section in sections:
+        db_unit = section_map.get(section, section)
+        
+        # Get personnel for this section/unit
+        if section in section_map:
+            section_personnel = [p for p in all_personnel if (p.section or '') == db_unit]
+        else:
+            section_personnel = [p for p in all_personnel if (p.unit or '').upper() == db_unit.upper()]
+        
+        if not section_personnel:
+            continue
+        
+        # Sort by rank
+        section_personnel.sort(key=rank_sort_key)
+        
+        # Section header
+        ws.cell(row=current_row, column=1).value = section
+        ws.cell(row=current_row, column=1).font = Font(bold=True, size=11)
+        ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=len(dispo_headers))
+        current_row += 1
+        
+        # Section table headers
+        for col_idx, col_name in enumerate(dispo_headers, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = col_name
+            c.font = Font(bold=True, color='FFFFFF')
+            c.fill = header_fill
+            c.border = thin
+            c.alignment = Alignment(horizontal='center', vertical='center')
+        current_row += 1
+        
+        # Get mandatory and specialized training titles
+        for idx, p in enumerate(section_personnel, start=1):
+            mandatory_titles = '; '.join([t.title for t in (p.trainings or []) if t.category == 'mandatory']) or ''
+            specialized_titles = '; '.join([t.title for t in (p.trainings or []) if t.category == 'specialized']) or ''
+            
+            row = [
+                idx,
+                safe(p.badge_number),
+                safe(p.rank).upper(),
+                safe(p.last_name).upper(),
+                safe(p.first_name).upper(),
+                safe(p.mi).upper(),
+                safe(p.suffix).upper(),
+                fmt_date(p.date_of_reassignment),
+                safe(p.designation),
+                fmt_date(p.date_of_designation),
+                mandatory_titles,
+                specialized_titles,
+                safe(p.highest_eligibility),
+                safe(p.contact_number),
+                fmt_date(p.birthdate),
+                safe(p.religion).upper(),
+            ]
+            for col_idx, val in enumerate(row, start=1):
+                c = ws.cell(row=current_row, column=col_idx)
+                c.value = val
+                c.border = thin
+                c.alignment = Alignment(horizontal='left', vertical='center')
+            current_row += 1
+        
+        # Count for summary
+        pco_count = sum(1 for p in section_personnel if p.status and p.status.upper() == 'UP' and 
+                       (p.rank or '').upper() in ['PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT', 'PMGEN', 'PBGEN'])
+        pnco_count = sum(1 for p in section_personnel if p.status and p.status.upper() == 'UP' and 
+                        (p.rank or '').upper() in ['PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT'])
+        nup_count = sum(1 for p in section_personnel if p.status and p.status.upper() == 'NUP')
+        
+        grand_pco_act += pco_count
+        grand_pnco_act += pnco_count
+        grand_nup_act += nup_count
+        
+        current_row += 1
+    
+    # Summary section at bottom
+    ws.cell(row=current_row, column=1).value = 'SUMMARY'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=11)
+    ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=4)
+    current_row += 1
+    
+    # Summary headers
+    sum_headers = ['', 'ACT', 'AUT', 'VAR']
+    for col_idx, col_name in enumerate(sum_headers, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+    current_row += 1
+    
+    # Summary rows
+    summary_data = [
+        ('PCO', grand_pco_act, pco_aut_sub, grand_pco_act - pco_aut_sub),
+        ('PNCO', grand_pnco_act, pnco_aut_sub, grand_pnco_act - pnco_aut_sub),
+        ('NUP', grand_nup_act, nup_aut_val, grand_nup_act - nup_aut_val),
+        ('TOTAL', grand_pco_act + grand_pnco_act + grand_nup_act, pco_aut_sub + pnco_aut_sub + nup_aut_val, 
+         (grand_pco_act + grand_pnco_act + grand_nup_act) - (pco_aut_sub + pnco_aut_sub + nup_aut_val))
+    ]
+    
+    for label, act, aut, var in summary_data:
+        ws.cell(row=current_row, column=1).value = label
+        ws.cell(row=current_row, column=1).font = Font(bold=True)
+        ws.cell(row=current_row, column=2).value = act
+        ws.cell(row=current_row, column=3).value = aut
+        ws.cell(row=current_row, column=4).value = var
+        for col in range(1, 5):
+            ws.cell(row=current_row, column=col).border = thin
+        current_row += 1
+    
+    current_row += 1
+    
+    # Signatures (Checked by instead of Verified Correct by)
+    sig_row = current_row
+    ws.cell(row=sig_row, column=1).value = 'Prepared by:'
+    ws.cell(row=sig_row, column=1).font = Font(bold=True)
+    ws.cell(row=sig_row+1, column=1).value = prepared_by_name or ''
+    ws.cell(row=sig_row+2, column=1).value = prepared_by_title or ''
+    
+    ws.cell(row=sig_row, column=4).value = 'Checked by:'
+    ws.cell(row=sig_row, column=4).font = Font(bold=True)
+    ws.cell(row=sig_row+1, column=4).value = verified_by_name or ''
+    ws.cell(row=sig_row+2, column=4).value = verified_by_title or ''
+    
+    ws.cell(row=sig_row, column=7).value = 'Noted by:'
+    ws.cell(row=sig_row, column=7).font = Font(bold=True)
+    ws.cell(row=sig_row+1, column=7).value = noted_by_name or ''
+    ws.cell(row=sig_row+2, column=7).value = noted_by_title or ''
+    
+    for i, w in enumerate([8, 12, 10, 18, 18, 12, 10, 14, 18, 14, 20, 20, 18, 14, 14, 14], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ============================================================
+    # TAB 8: PERSONNEL FILL-UP
+    # ============================================================
+    ws = wb.create_sheet(title=sheet_names[7])
+    write_sheet_title(ws, sheet_names[7], 20)
+    current_row = 5
+    
+    fillup_headers = ['', 'PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT', 'TOTAL', 
+                      'PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT', 'TOTAL',
+                      'NUP', 'GRAND TOTAL']
+    
+    for col_idx, col_name in enumerate(fillup_headers, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+        c.alignment = Alignment(horizontal='center', vertical='center')
+    current_row += 1
+    
+    fillup_units = ['Regional Office', 'Cavite', 'Laguna', 'Batangas', 'Rizal', 'Quezon', 'TOTAL']
+    
+    for fu in fillup_units:
+        if fu == 'TOTAL':
+            ws.cell(row=current_row, column=1).value = 'TOTAL'
+            ws.cell(row=current_row, column=1).font = Font(bold=True)
+            for col in range(2, 18):
+                ws.cell(row=current_row, column=col).font = Font(bold=True)
+                ws.cell(row=current_row, column=col).border = thin
+            ws.cell(row=current_row, column=7).value = 0
+            ws.cell(row=current_row, column=15).value = 0
+            ws.cell(row=current_row, column=16).value = 0
+            ws.cell(row=current_row, column=17).value = 0
+        else:
+            db_unit = fu.upper() if fu != 'Regional Office' else 'RHQ'
+            unit_personnel = [p for p in all_personnel if (p.unit or '').upper() == db_unit]
+            
+            pco_counts = {r: sum(1 for p in unit_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == r) 
+                         for r in ['PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT']}
+            pnco_counts = {r: sum(1 for p in unit_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == r) 
+                          for r in ['PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT']}
+            
+            pco_total = sum(pco_counts.values())
+            pnco_total = sum(pnco_counts.values())
+            nup_total = sum(1 for p in unit_personnel if p.status and p.status.upper() == 'NUP')
+            
+    # Comment out problematic row_data.append - just skip storing for now
+            # row_data.append({
+            #     'pco_total': int(pco_total) if pco_total else 0, 
+            #     'pnco_total': int(pnco_total) if pnco_total else 0, 
+            #     'nup_total': int(nup_total) if nup_total else 0
+            # })
+            
+            row = [fu] + [pco_counts[r] for r in ['PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT']] + [pco_total] + \
+                  [pnco_counts[r] for r in ['PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT']] + [pnco_total] + [nup_total, pco_total + pnco_total + nup_total]
+            
+            for col_idx, val in enumerate(row, start=1):
+                c = ws.cell(row=current_row, column=col_idx)
+                c.value = val
+                c.border = thin
+                c.alignment = Alignment(horizontal='center', vertical='center')
+        
+        current_row += 1
+    
+    # Signatures
+    current_row += 1
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    for i, w in enumerate([16, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 10, 12], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ============================================================
+    # TAB 9: KEY OFFICERS (only those with designation)
+    # ============================================================
+    ws = wb.create_sheet(title=sheet_names[8])
+    write_sheet_title(ws, sheet_names[8], 6)
+    current_row = 5
+    
+    kheaders = ['Designation', 'Authorized Rank', 'Rank and Name', 'Date of Designation', 'Contact Number']
     for col_idx, col_name in enumerate(kheaders, start=1):
         c = ws.cell(row=current_row, column=col_idx)
         c.value = col_name
         c.font = Font(bold=True, color='FFFFFF')
         c.fill = header_fill
         c.border = thin
+        c.alignment = Alignment(horizontal='center', vertical='center')
     current_row += 1
-    # define senior rank keywords
-    senior_keys = ['PGEN','MGEN','BGEN','COL','LTCOL','LT COL','MAJ','CPT']
-    for p in sorted(all_personnel, key=lambda x: (x.rank or '', x.last_name or '')):
-        if any(k in (p.rank or '') for k in senior_keys):
-            fullname = f"{safe(p.last_name)}, {safe(p.first_name)}"
-            row = [safe(p.rank), fullname, safe(p.badge_number), safe(p.unit), safe(p.designation), safe(p.contact_number)]
+    
+    # Only personnel with designation
+    key_officers = [p for p in all_personnel if p.designation and p.designation.strip()]
+    key_officers.sort(key=lambda x: (x.designation or '', x.last_name or '', x.first_name or ''))
+    
+    for p in key_officers:
+        fullname = f"{safe(p.rank)} {safe(p.last_name)}, {safe(p.first_name)}"
+        row = [
+            safe(p.designation).upper(),
+            safe(p.rank).upper(),
+            fullname.upper(),
+            fmt_date(p.date_of_designation),
+            safe(p.contact_number),
+        ]
+        for col_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+            c.alignment = Alignment(horizontal='left', vertical='center')
+        current_row += 1
+    
+    # Signatures
+    current_row += 2
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    for i, w in enumerate([25, 15, 30, 16, 14], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ============================================================
+    # TAB 10: STATION LIST (only those with designation, sorted by rank)
+    # ============================================================
+    ws = wb.create_sheet(title=sheet_names[9])
+    write_sheet_title(ws, sheet_names[9], 8)
+    current_row = 5
+    
+    sl_headers = ['Badge Number', 'SCOMM', 'Rank', 'Last', 'First', 'MI', 'Qualifier', 'Date of Designation', 'Designation']
+    for col_idx, col_name in enumerate(sl_headers, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+        c.alignment = Alignment(horizontal='center', vertical='center')
+    current_row += 1
+    
+    # Only personnel with designation, sorted by rank
+    station_list = [p for p in all_personnel if p.designation and p.designation.strip()]
+    station_list.sort(key=rank_sort_key)
+    
+    for p in station_list:
+        row = [
+            safe(p.badge_number).upper(),
+            safe(p.badge_number).upper(),
+            safe(p.rank).upper(),
+            safe(p.last_name).upper(),
+            safe(p.first_name).upper(),
+            safe(p.mi).upper(),
+            safe(p.suffix).upper(),
+            fmt_date(p.date_of_designation),
+            safe(p.designation).upper(),
+        ]
+        for col_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=current_row, column=col_idx)
+            c.value = val
+            c.border = thin
+            c.alignment = Alignment(horizontal='left', vertical='center')
+        current_row += 1
+    
+    current_row += 1
+    
+    # Recapitulation
+    ws.cell(row=current_row, column=1).value = 'RECAPITULATION'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=11)
+    current_row += 1
+    
+    recapitulation = [
+        ('PCOL', sum(1 for p in station_list if (p.rank or '').upper() == 'PCOL')),
+        ('PLTCOL', sum(1 for p in station_list if (p.rank or '').upper() == 'PLTCOL')),
+        ('PMAJ', sum(1 for p in station_list if (p.rank or '').upper() == 'PMAJ')),
+        ('PCPT', sum(1 for p in station_list if (p.rank or '').upper() == 'PCPT')),
+        ('PLT', sum(1 for p in station_list if (p.rank or '').upper() == 'PLT')),
+        ('TOTAL', sum(1 for p in station_list if (p.rank or '').upper() in ['PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT']))
+    ]
+    
+    for label, count in recapitulation:
+        ws.cell(row=current_row, column=1).value = label
+        ws.cell(row=current_row, column=2).value = count
+        if label == 'TOTAL':
+            ws.cell(row=current_row, column=1).font = Font(bold=True)
+            ws.cell(row=current_row, column=2).font = Font(bold=True)
+        current_row += 1
+    
+    # Signatures
+    current_row += 2
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    for i, w in enumerate([14, 14, 10, 18, 18, 8, 10, 16, 25], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ============================================================
+    # TAB 11: RANK INVENTORY (simple summary)
+    # ============================================================
+    ws = wb.create_sheet(title=sheet_names[10])
+    write_sheet_title(ws, sheet_names[10], 5)
+    current_row = 5
+    
+    ws.cell(row=current_row, column=1).value = 'RFU'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = 'CIDG REGION 4A'
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 1
+    
+    ws.cell(row=current_row, column=1).value = 'Date'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = display_date
+    current_row += 2
+    
+    # PCO Section
+    ws.cell(row=current_row, column=1).value = 'PCO'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
+    ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+    current_row += 1
+    
+    pco_inv = [
+        ('PCOL', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PCOL')),
+        ('PLTCOL', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PLTCOL')),
+        ('PMAJ', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PMAJ')),
+        ('PCPT', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PCPT')),
+        ('PLT', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PLT')),
+    ]
+    
+    for rank, count in pco_inv:
+        ws.cell(row=current_row, column=1).value = rank
+        ws.cell(row=current_row, column=2).value = count
+        current_row += 1
+    
+    pco_total = sum(c for _, c in pco_inv)
+    ws.cell(row=current_row, column=1).value = 'Total'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = pco_total
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 2
+    
+    # PNCO Section
+    ws.cell(row=current_row, column=1).value = 'PNCO'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
+    ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+    current_row += 1
+    
+    pnco_inv = [
+        ('PEMS', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PEMS')),
+        ('PCMS', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PCMS')),
+        ('PSMS', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PSMS')),
+        ('PMSG', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PMSG')),
+        ('PSSG', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PSSG')),
+        ('PCPL', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PCPL')),
+        ('PAT', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PAT')),
+    ]
+    
+    for rank, count in pnco_inv:
+        ws.cell(row=current_row, column=1).value = rank
+        ws.cell(row=current_row, column=2).value = count
+        current_row += 1
+    
+    pnco_total = sum(c for _, c in pnco_inv)
+    ws.cell(row=current_row, column=1).value = 'Total'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = pnco_total
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 2
+    
+    # NUP Section
+    ws.cell(row=current_row, column=1).value = 'NUP'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
+    ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+    current_row += 1
+    
+    nup_total = sum(1 for p in all_personnel if p.status and p.status.upper() == 'NUP')
+    ws.cell(row=current_row, column=1).value = 'NUP'
+    ws.cell(row=current_row, column=2).value = nup_total
+    current_row += 1
+    
+    ws.cell(row=current_row, column=1).value = 'Total'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = nup_total
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 2
+    
+    # Total Strength
+    ws.cell(row=current_row, column=1).value = 'TOTAL STRENGTH'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
+    ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+    current_row += 1
+    
+    ws.cell(row=current_row, column=1).value = 'PCO Total'
+    ws.cell(row=current_row, column=2).value = pco_total
+    current_row += 1
+    ws.cell(row=current_row, column=1).value = 'PNCO Total'
+    ws.cell(row=current_row, column=2).value = pnco_total
+    current_row += 1
+    ws.cell(row=current_row, column=1).value = 'NUP Total'
+    ws.cell(row=current_row, column=2).value = nup_total
+    current_row += 1
+    
+    grand_total = pco_total + pnco_total + nup_total
+    ws.cell(row=current_row, column=1).value = 'Grand Total'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = grand_total
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    
+    # No signatures for Rank Inventory
+    ws.column_dimensions['A'].width = 20
+    ws.column_dimensions['B'].width = 15
+
+    # ============================================================
+    # TAB 12: CIDG RFU4A LIST OF PCOs AND CONTACT NUMBERS
+    # ============================================================
+    ws = wb.create_sheet(title=sheet_names[11])
+    write_sheet_title(ws, sheet_names[11], 10)
+    current_row = 5
+    
+    pco_headers = ['Badge No.', 'SCOMM', 'Rank', 'Last', 'First', 'MI', 'Qualifier', 'Designation', 'Contact Number']
+    for col_idx, col_name in enumerate(pco_headers, start=1):
+        c = ws.cell(row=current_row, column=col_idx)
+        c.value = col_name
+        c.font = Font(bold=True, color='FFFFFF')
+        c.fill = header_fill
+        c.border = thin
+        c.alignment = Alignment(horizontal='center', vertical='center')
+    current_row += 1
+    
+    # Group by office, then by rank
+    pco_offices = ['Regional Office', 'Cavite PFU', 'Laguna PFU', 'Batangas PFU', 'Rizal PFU', 'Quezon PFU']
+    office_map = {'RHQ': 'Regional Office', 'CAVITE': 'Cavite PFU', 'LAGUNA': 'Laguna PFU', 
+                  'BATANGAS': 'Batangas PFU', 'RIZAL': 'Rizal PFU', 'QUEZON': 'Quezon PFU'}
+    rev_office = {v: k for k, v in office_map.items()}
+    
+    for pco_office in pco_offices:
+        db_unit = rev_office.get(pco_office, pco_office)
+        
+        # Get PCO personnel for this office
+        office_pcos = [p for p in all_personnel if 
+                      p.status and p.status.upper() == 'UP' and 
+                      (p.unit or '').upper() == db_unit.upper() and
+                      (p.rank or '').upper() in ['PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT', 'PMGEN', 'PBGEN']]
+        
+        if not office_pcos:
+            continue
+        
+        # Sort by rank
+        office_pcos.sort(key=rank_sort_key)
+        
+        # Office header
+        ws.cell(row=current_row, column=1).value = pco_office
+        ws.cell(row=current_row, column=1).font = Font(bold=True, size=11)
+        ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=len(pco_headers))
+        current_row += 1
+        
+        for p in office_pcos:
+            row = [
+                safe(p.badge_number).upper(),
+                safe(p.badge_number).upper(),
+                safe(p.rank).upper(),
+                safe(p.last_name).upper(),
+                safe(p.first_name).upper(),
+                safe(p.mi).upper(),
+                safe(p.suffix).upper(),
+                safe(p.designation).upper(),
+                safe(p.contact_number),
+            ]
             for col_idx, val in enumerate(row, start=1):
                 c = ws.cell(row=current_row, column=col_idx)
                 c.value = val
                 c.border = thin
+                c.alignment = Alignment(horizontal='left', vertical='center')
             current_row += 1
-    for i, w in enumerate([14,26,14,16,22,16], start=1):
+    
+    # Signatures
+    current_row += 1
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    for i, w in enumerate([14, 14, 10, 18, 18, 8, 10, 25, 16], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    # 9) STATION LIST (unique units)
-    ws = wb.create_sheet(title=sheet_names[8])
-    write_sheet_title(ws, sheet_names[8])
-    current_row = 5
-    ws.cell(row=current_row, column=1).value = 'Station/Unit'
-    ws.cell(row=current_row, column=2).value = 'Personnel Count'
-    ws.cell(row=current_row, column=1).font = Font(bold=True)
-    ws.cell(row=current_row, column=2).font = Font(bold=True)
-    current_row += 1
-    for u in sorted({(p.unit or 'N/A') for p in all_personnel}):
-        ws.cell(row=current_row, column=1).value = u
-        ws.cell(row=current_row, column=2).value = sum(1 for p in all_personnel if (p.unit or '').upper() == (u or '').upper())
-        current_row += 1
-    ws.column_dimensions[get_column_letter(1)].width = 30
-
-    # 10) RANK INVENTORY (detailed by rank)
-    ws = wb.create_sheet(title=sheet_names[9])
-    write_sheet_title(ws, sheet_names[9])
+    # ============================================================
+    # Finalize and return the workbook
+    # ============================================================
+    stream = BytesIO()
+    wb.save(stream)
+    stream.seek(0)
+    safe_base = (file_name or 'form201_report').strip() or 'form201_report'
+    return StreamingResponse(
+        stream,
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={"Content-Disposition": f"attachment;filename={safe_base}.xlsx"}
+    )
     current_row = 5
     r_headers = ['Rank', 'No.', 'Badge Number', 'Last Name', 'First Name', 'MI', 'Unit']
     for col_idx, col_name in enumerate(r_headers, start=1):
@@ -1137,29 +1960,188 @@ def personnel_report(
     for i, w in enumerate([18,6,14,18,18,10,16], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    # 11) CIDG RFU4A LIST OF PCOs AND CONTACT NUMBERS
+    # ============================================================
+    # TAB 11: RANK INVENTORY (simple summary)
+    # ============================================================
     ws = wb.create_sheet(title=sheet_names[10])
-    write_sheet_title(ws, sheet_names[10])
+    write_sheet_title(ws, sheet_names[10], 5)
     current_row = 5
-    pco_headers = ['Rank', 'Full Name', 'Unit', 'Designation', 'Contact Number']
+    
+    ws.cell(row=current_row, column=1).value = 'RFU'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = 'CIDG REGION 4A'
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 1
+    
+    ws.cell(row=current_row, column=1).value = 'Date'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = display_date
+    current_row += 2
+    
+    # PCO Section
+    ws.cell(row=current_row, column=1).value = 'PCO'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
+    ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+    current_row += 1
+    
+    pco_inv = [
+        ('PCOL', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PCOL')),
+        ('PLTCOL', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PLTCOL')),
+        ('PMAJ', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PMAJ')),
+        ('PCPT', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PCPT')),
+        ('PLT', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PLT')),
+    ]
+    
+    for rank, count in pco_inv:
+        ws.cell(row=current_row, column=1).value = rank
+        ws.cell(row=current_row, column=2).value = count
+        current_row += 1
+    
+    pco_total = sum(c for _, c in pco_inv)
+    ws.cell(row=current_row, column=1).value = 'Total'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = pco_total
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 2
+    
+    # PNCO Section
+    ws.cell(row=current_row, column=1).value = 'PNCO'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
+    ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+    current_row += 1
+    
+    pnco_inv = [
+        ('PEMS', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PEMS')),
+        ('PCMS', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PCMS')),
+        ('PSMS', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PSMS')),
+        ('PMSG', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PMSG')),
+        ('PSSG', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PSSG')),
+        ('PCPL', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PCPL')),
+        ('PAT', sum(1 for p in all_personnel if p.status and p.status.upper() == 'UP' and (p.rank or '').upper() == 'PAT')),
+    ]
+    
+    for rank, count in pnco_inv:
+        ws.cell(row=current_row, column=1).value = rank
+        ws.cell(row=current_row, column=2).value = count
+        current_row += 1
+    
+    pnco_total = sum(c for _, c in pnco_inv)
+    ws.cell(row=current_row, column=1).value = 'Total'
+    ws.cell(row=current_row, column=1).font = Font(bold=True)
+    ws.cell(row=current_row, column=2).value = pnco_total
+    ws.cell(row=current_row, column=2).font = Font(bold=True)
+    current_row += 2
+    
+    # NUP Section
+    ws.cell(row=current_row, column=1).value = 'NUP'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
+    ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+    current_row += 1
+    
+    nup_count = sum(1 for p in all_personnel if p.status and p.status.upper() == 'NUP')
+    ws.cell(row=current_row, column=1).value = 'NUP'
+    ws.cell(row=current_row, column=2).value = nup_count
+    current_row += 2
+    
+    # Grand Total
+    ws.cell(row=current_row, column=1).value = 'GRAND TOTAL'
+    ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
+    ws.cell(row=current_row, column=2).value = pco_total + pnco_total + nup_count
+    ws.cell(row=current_row, column=2).font = Font(bold=True, size=12)
+    
+    # Note: No signatories for Rank Inventory
+    for i, w in enumerate([20, 15], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ============================================================
+    # TAB 12: CIDG RFU4A LIST OF PCOs AND CONTACT NUMBERS
+    # Only PCO records, grouped by office, sorted by rank hierarchy
+    # ============================================================
+    ws = wb.create_sheet(title=sheet_names[11])
+    write_sheet_title(ws, sheet_names[11], 8)
+    current_row = 5
+    
+    # Headers
+    pco_headers = ['Badge No.', 'SCOMM', 'Rank', 'Last', 'First', 'MI', 'Qualifier', 'Designation', 'Contact Number']
     for col_idx, col_name in enumerate(pco_headers, start=1):
         c = ws.cell(row=current_row, column=col_idx)
         c.value = col_name
         c.font = Font(bold=True, color='FFFFFF')
         c.fill = header_fill
         c.border = thin
+        c.alignment = Alignment(horizontal='center', vertical='center')
     current_row += 1
-    for p in all_personnel:
-        # include those with contact numbers; designation containing PCO prioritized
-        if p.contact_number or (p.designation and 'PCO' in p.designation):
-            fullname = f"{safe(p.last_name)}, {safe(p.first_name)}"
-            row = [safe(p.rank), fullname, safe(p.unit), safe(p.designation), safe(p.contact_number)]
+    
+    # Define office order and mapping
+    office_order = ['RFU4A HQS', 'CAVITE PFU', 'LAGUNA PFU', 'BATANGAS PFU', 'RIZAL PFU', 'QUEZON PFU']
+    unit_to_office = {
+        'RHQ': 'RFU4A HQS', 'CAVITE': 'CAVITE PFU', 'LAGUNA': 'LAGUNA PFU',
+        'BATANGAS': 'BATANGAS PFU', 'RIZAL': 'RIZAL PFU', 'QUEZON': 'QUEZON PFU'
+    }
+    
+    # PCO ranks to include
+    pco_ranks = ['PMGEN', 'PBGEN', 'PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT']
+    
+    # Group personnel by office
+    for office_name in office_order:
+        # Find matching unit
+        db_unit = None
+        for k, v in unit_to_office.items():
+            if v == office_name:
+                db_unit = k
+                break
+        
+        if not db_unit:
+            continue
+            
+        # Filter PCOs for this unit
+        office_personnel = [
+            p for p in all_personnel 
+            if (p.unit or '').upper() == db_unit.upper()
+            and p.status and p.status.upper() == 'UP'
+            and (p.rank or '').upper() in pco_ranks
+        ]
+        
+        if not office_personnel:
+            continue
+        
+        # Sort by rank hierarchy
+        office_personnel.sort(key=rank_sort_key)
+        
+        # Office header
+        ws.cell(row=current_row, column=1).value = office_name
+        ws.cell(row=current_row, column=1).font = Font(bold=True, size=11)
+        ws.cell(row=current_row, column=1).fill = PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=len(pco_headers))
+        current_row += 1
+        
+        # Write personnel rows
+        for p in office_personnel:
+            row = [
+                safe(p.badge_number).upper(),
+                safe(p.badge_number).upper(),  # SCOMM = Badge No
+                safe(p.rank).upper(),
+                safe(p.last_name).upper(),
+                safe(p.first_name).upper(),
+                safe(p.mi).upper(),
+                safe(p.suffix).upper(),
+                safe(p.designation).upper() if p.designation else '',
+                safe(p.contact_number),
+            ]
             for col_idx, val in enumerate(row, start=1):
                 c = ws.cell(row=current_row, column=col_idx)
                 c.value = val
                 c.border = thin
+                c.alignment = Alignment(horizontal='left', vertical='center')
             current_row += 1
-    for i, w in enumerate([14,26,16,22,18], start=1):
+        
+        current_row += 1  # Blank row between offices
+    
+    # Signatures
+    current_row += 1
+    write_signatures(ws, current_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title)
+    
+    for i, w in enumerate([12, 12, 10, 18, 18, 8, 10, 20, 14], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
     # Finalize stream

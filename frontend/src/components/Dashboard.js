@@ -6,6 +6,7 @@ const UNITS = ['RHQ', 'Cavite', 'Laguna', 'Batangas', 'Rizal', 'Quezon'];
 
 export default function Dashboard() {
   const [counts, setCounts] = useState({});
+  const [bmiCounts, setBmiCounts] = useState({});
   const [orgChartError, setOrgChartError] = useState(false);
 
   const { version } = useContext(RefreshContext);
@@ -14,6 +15,11 @@ export default function Dashboard() {
     api
       .get('/api/personnel/counts')
       .then(r => setCounts(r.data))
+      .catch(() => {});
+    
+    api
+      .get('/api/bmi/counts')
+      .then(r => setBmiCounts(r.data))
       .catch(() => {});
   }, [version]);
 
@@ -49,7 +55,7 @@ export default function Dashboard() {
         {/* Active Units card removed per spec */}
         <div className="stat-card">
           <div className="stat-card-label">BMI Records (Month)</div>
-          <div className="stat-card-value">0</div>
+          <div className="stat-card-value">{bmiCounts.total_monthly || 0}</div>
           <div className="stat-card-meta">Monitoring coverage this month</div>
         </div>
         <div className="stat-card">
@@ -144,7 +150,7 @@ export default function Dashboard() {
             {UNITS.map(u => (
               <div key={u} className="metric-list-row">
                 <div className="metric-list-label">{u}</div>
-                <div className="metric-list-value text-muted">0 records</div>
+                <div className="metric-list-value">{bmiCounts[u]?.monthly || 0} records</div>
               </div>
             ))}
           </div>

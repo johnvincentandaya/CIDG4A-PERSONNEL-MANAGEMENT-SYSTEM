@@ -848,11 +848,39 @@ export default function BMIMonitor(){
                     fd.append('report_type', reportType);
                     fd.append('file_name', reportFileName.trim());
                     const res = await api.post('/api/bmi/report', fd, { responseType: 'blob' });
+                    
+                    // Check if response is actually an error (JSON) instead of blob
+                    const contentType = res.headers['content-type'];
+                    if (contentType && contentType.includes('application/json')) {
+                      // It's an error response, parse it
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        try {
+                          const errorData = JSON.parse(reader.result);
+                          alert(errorData.detail || 'Error generating report');
+                        } catch (e) {
+                          alert('Error generating BMI report');
+                        }
+                      };
+                      reader.readAsText(res.data);
+                      return;
+                    }
+                    
+                    // Check if response is valid and not empty
+                    if (!res.data || res.data.size === 0) {
+                      alert('No records found for the selected filters.');
+                      return;
+                    }
+                    
                     const ext = reportType === 'excel' ? 'xlsx' : 'pdf';
                     const url = window.URL.createObjectURL(new Blob([res.data]));
                     const a = document.createElement('a'); a.href = url; a.download = `${reportFileName.trim()}.${ext}`; document.body.appendChild(a); a.click(); a.remove();
+                    window.URL.revokeObjectURL(url);
                     setShowReportModal(false);
-                  }catch(err){ alert('Error generating BMI report'); }
+                  }catch(err){ 
+                    console.error('Report generation error:', err);
+                    alert('Error generating BMI report. Please check console for details.');
+                  }
                 }} disabled={!reportFileName.trim()}>Generate</button>
               </div>
             </div>
