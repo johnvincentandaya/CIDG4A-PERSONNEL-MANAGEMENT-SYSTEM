@@ -87,15 +87,20 @@ def startup():
 @router.post("/basic", response_model=schemas.PersonnelSchema)
 def create_personnel_basic(
     rank: str = Form(...),
-    badge_number: str = Form(...),
+    badge_number: Optional[str] = Form(None),
     last_name: str = Form(...),
     first_name: str = Form(...),
     mi: Optional[str] = Form(None),
     suffix: Optional[str] = Form(None),
     unit: str = Form(...),
     status: str = Form(...),
+    status_custom: Optional[str] = Form(None),
     qlf: Optional[str] = Form(None),
+    nup_rank: Optional[str] = Form(None),
+    nup_entry_number: Optional[int] = Form(None),
+    date_of_reassignment: Optional[str] = Form(None),
     designation: Optional[str] = Form(None),
+    date_of_designation: Optional[str] = Form(None),
     highest_eligibility: Optional[str] = Form(None),
     contact_number: Optional[str] = Form(None),
     birthdate: Optional[str] = Form(None),
@@ -107,6 +112,21 @@ def create_personnel_basic(
     Create a personnel record without requiring any documents.
     Documents and trainings can be attached later via the update endpoint.
     """
+    def _parse_date(s: Optional[str]):
+        if not s:
+            return None
+        try:
+            return datetime.strptime(s, "%Y-%m-%d")
+        except Exception:
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                return None
+
+    parsed_reassignment = _parse_date(date_of_reassignment)
+    parsed_designation_date = _parse_date(date_of_designation)
+    parsed_birthdate = _parse_date(birthdate)
+
     p = models.Personnel(
         rank=_upper_str(rank),
         badge_number=_upper_str(badge_number),
@@ -116,11 +136,16 @@ def create_personnel_basic(
         suffix=_upper_str(suffix),
         unit=_upper_str(unit),
         status=_upper_str(status),
+        status_custom=_upper_str(status_custom),
         qlf=_upper_str(qlf),
+        nup_rank=_upper_str(nup_rank),
+        nup_entry_number=nup_entry_number,
+        date_of_reassignment=parsed_reassignment,
         designation=_upper_str(designation),
+        date_of_designation=parsed_designation_date,
         highest_eligibility=_upper_str(highest_eligibility),
         contact_number=_upper_str(contact_number),
-        birthdate=birthdate,
+        birthdate=parsed_birthdate,
         religion=_upper_str(religion),
         section=_upper_str(section),
     )
@@ -133,14 +158,17 @@ def create_personnel_basic(
 @router.post("/", response_model=schemas.PersonnelSchema)
 async def create_personnel(
     rank: str = Form(...),
-    badge_number: str = Form(...),
+    badge_number: Optional[str] = Form(None),
     last_name: str = Form(...),
     first_name: str = Form(...),
     mi: Optional[str] = Form(None),
     suffix: Optional[str] = Form(None),
     unit: str = Form(...),
     status: str = Form(...),
+    status_custom: Optional[str] = Form(None),
     qlf: Optional[str] = Form(None),
+    nup_rank: Optional[str] = Form(None),
+    nup_entry_number: Optional[int] = Form(None),
     date_of_reassignment: Optional[str] = Form(None),
     designation: Optional[str] = Form(None),
     date_of_designation: Optional[str] = Form(None),
@@ -153,7 +181,7 @@ async def create_personnel(
     pds: Optional[UploadFile] = File(None),
     appointment: Optional[UploadFile] = File(None),
     promotion: Optional[UploadFile] = File(None),
-    designation: Optional[UploadFile] = File(None),
+    designation_file: Optional[UploadFile] = File(None),
     reassignment: Optional[UploadFile] = File(None),
     diploma: Optional[UploadFile] = File(None),
     eligibility: Optional[UploadFile] = File(None),
@@ -194,14 +222,16 @@ async def create_personnel(
     suffix = _upper_str(suffix)
     unit = _upper_str(unit)
     status = _upper_str(status)
+    status_custom = _upper_str(status_custom)
     qlf = _upper_str(qlf)
+    nup_rank = _upper_str(nup_rank)
     designation = _upper_str(designation)
     highest_eligibility = _upper_str(highest_eligibility)
     contact_number = _upper_str(contact_number)
     religion = _upper_str(religion)
     section = _upper_str(section)
 
-    # create personnel entry (badge_number is required)
+    # create personnel entry (badge_number is optional)
     p = models.Personnel(
         rank=rank,
         badge_number=badge_number,
@@ -211,7 +241,10 @@ async def create_personnel(
         suffix=suffix,
         unit=unit,
         status=status,
+        status_custom=status_custom,
         qlf=qlf,
+        nup_rank=nup_rank,
+        nup_entry_number=nup_entry_number,
         designation=designation,
         highest_eligibility=highest_eligibility,
         contact_number=contact_number,
@@ -248,7 +281,7 @@ async def create_personnel(
     await save_single(pds, "pds")
     await save_single(appointment, "appointment")
     await save_single(promotion, "promotion")
-    await save_single(designation, "designation")
+    await save_single(designation_file, "designation")
     await save_single(reassignment, "reassignment")
     await save_single(diploma, "diploma")
     await save_single(eligibility, "eligibility")
@@ -337,14 +370,17 @@ def get_person(person_id: int, db: Session = Depends(get_db)):
 async def update_person(
     person_id: int,
     rank: str = Form(...),
-    badge_number: str = Form(...),
+    badge_number: Optional[str] = Form(None),
     last_name: str = Form(...),
     first_name: str = Form(...),
     mi: Optional[str] = Form(None),
     suffix: Optional[str] = Form(None),
     unit: str = Form(...),
     status: str = Form(...),
+    status_custom: Optional[str] = Form(None),
     qlf: Optional[str] = Form(None),
+    nup_rank: Optional[str] = Form(None),
+    nup_entry_number: Optional[int] = Form(None),
     date_of_reassignment: Optional[str] = Form(None),
     designation: Optional[str] = Form(None),
     date_of_designation: Optional[str] = Form(None),
@@ -357,7 +393,7 @@ async def update_person(
     pds: Optional[UploadFile] = File(None),
     appointment: Optional[UploadFile] = File(None),
     promotion: Optional[UploadFile] = File(None),
-    designation: Optional[UploadFile] = File(None),
+    designation_file: Optional[UploadFile] = File(None),
     reassignment: Optional[UploadFile] = File(None),
     diploma: Optional[UploadFile] = File(None),
     eligibility: Optional[UploadFile] = File(None),
@@ -401,7 +437,10 @@ async def update_person(
     person.suffix = _upper_str(suffix)
     person.unit = _upper_str(unit)
     person.status = _upper_str(status)
+    person.status_custom = _upper_str(status_custom)
     person.qlf = _upper_str(qlf)
+    person.nup_rank = _upper_str(nup_rank)
+    person.nup_entry_number = nup_entry_number
     person.designation = _upper_str(designation)
     person.date_of_reassignment = _parse_date(date_of_reassignment)
     person.date_of_designation = _parse_date(date_of_designation)
@@ -452,7 +491,7 @@ async def update_person(
     await replace_single(pds, 'pds')
     await replace_single(appointment, 'appointment')
     await replace_single(promotion, 'promotion')
-    await replace_single(designation, 'designation')
+    await replace_single(designation_file, 'designation')
     await replace_single(reassignment, 'reassignment')
     await replace_single(diploma, 'diploma')
     await replace_single(eligibility, 'eligibility')

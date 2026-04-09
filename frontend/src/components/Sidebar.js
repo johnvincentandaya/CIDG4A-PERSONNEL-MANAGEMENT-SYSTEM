@@ -2,7 +2,6 @@ import React, { useContext } from 'react';
 import { NavLink } from 'react-router-dom';
 import cidgLogo from '../assets/cidg-logo.png';
 import { AuthContext } from '../contexts/AuthContext';
-import ThemeToggle from './ThemeToggle';
 
 export default function Sidebar(){
   const { logout } = useContext(AuthContext);
@@ -57,7 +56,6 @@ export default function Sidebar(){
         <div className="d-flex justify-content-between align-items-center">
           <small>© {new Date().getFullYear()} CIDG RFU4A</small>
           <div>
-            <ThemeToggle />
             <button className="btn btn-sm btn-outline-danger ms-2" onClick={()=>{ logout(); window.location.href='/login'; }}>Logout</button>
           </div>
         </div>

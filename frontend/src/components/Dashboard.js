@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useContext } from 'react';
 import { api } from '../api';
+import { RefreshContext } from '../contexts/RefreshContext';
 
 const UNITS = ['RHQ', 'Cavite', 'Laguna', 'Batangas', 'Rizal', 'Quezon'];
 
@@ -7,12 +8,14 @@ export default function Dashboard() {
   const [counts, setCounts] = useState({});
   const [orgChartError, setOrgChartError] = useState(false);
 
+  const { version } = useContext(RefreshContext);
+
   useEffect(() => {
     api
       .get('/api/personnel/counts')
       .then(r => setCounts(r.data))
       .catch(() => {});
-  }, []);
+  }, [version]);
 
   const totalPersonnel = useMemo(
     () => UNITS.reduce((sum, u) => sum + (counts[u] || 0), 0),
@@ -43,11 +46,7 @@ export default function Dashboard() {
           <div className="stat-card-value">{totalPersonnel}</div>
           <div className="stat-card-meta">Across all RFU4A units</div>
         </div>
-        <div className="stat-card">
-          <div className="stat-card-label">Active Units</div>
-          <div className="stat-card-value">{UNITS.length}</div>
-          <div className="stat-card-meta">RHQ and 5 provincial offices</div>
-        </div>
+        {/* Active Units card removed per spec */}
         <div className="stat-card">
           <div className="stat-card-label">BMI Records (Month)</div>
           <div className="stat-card-value">0</div>

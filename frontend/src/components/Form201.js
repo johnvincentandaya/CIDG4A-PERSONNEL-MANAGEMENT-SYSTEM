@@ -1,9 +1,10 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useState, useContext} from 'react';
 import { api, absolutizePath } from '../api';
 import { RANKS } from '../constants/ranks';
+import { RefreshContext } from '../contexts/RefreshContext';
 
 const UNITS = ['RHQ','Cavite','Laguna','Batangas','Rizal','Quezon'];
-const STATUS = ['Active','Reassigned','Retired'];
+const STATUS = ['Active','Inactive','Reassign','Retired','Others'];
 const ALLOWED_FILE_EXTENSIONS = ['pdf', 'doc', 'docx'];
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const FILE_ACCEPT_ATTR = '.pdf,.doc,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword';
@@ -70,6 +71,9 @@ export default function Form201(){
     suffix:'',
     unit:'RHQ',
     status:'Active',
+    status_custom:'',
+    nup_rank:'',
+    nup_entry_number:'',
     qlf:'',
     date_of_reassignment:'',
     designation:'',
@@ -120,17 +124,33 @@ export default function Form201(){
   const [statusFilter, setStatusFilter] = useState('All Status');
   const [search, setSearch] = useState('');
   const [showReportModal, setShowReportModal] = useState(false);
-  const [reportUnit, setReportUnit] = useState('All Units');
-  const [reportStatus, setReportStatus] = useState('All Status');
-  const [reportPreparedBy, setReportPreparedBy] = useState('');
-  const [reportNotedBy, setReportNotedBy] = useState('');
+  const [reportFileName, setReportFileName] = useState('');
+  const [reportScope, setReportScope] = useState('Overall');
+  const [reportSpecificUnit, setReportSpecificUnit] = useState('RHQ');
+  const [reportAsOfDate, setReportAsOfDate] = useState(new Date().toISOString().slice(0,10));
+  const [preparedByName, setPreparedByName] = useState('');
+  const [preparedByTitle, setPreparedByTitle] = useState('');
+  const [preparedBySignature, setPreparedBySignature] = useState(null);
+  const [verifiedByName, setVerifiedByName] = useState('');
+  const [verifiedByTitle, setVerifiedByTitle] = useState('');
+  const [verifiedBySignature, setVerifiedBySignature] = useState(null);
+  const [notedByName, setNotedByName] = useState('');
+  const [notedByTitle, setNotedByTitle] = useState('');
+  const [notedBySignature, setNotedBySignature] = useState(null);
+  const [authorizedValues, setAuthorizedValues] = useState('');
+  const [authorizedPCO, setAuthorizedPCO] = useState('');
+  const [authorizedPNCO, setAuthorizedPNCO] = useState('');
+  const [authorizedTotals, setAuthorizedTotals] = useState('');
+  const [reportModalTab, setReportModalTab] = useState('report');
+
+  const { bump } = useContext(RefreshContext);
 
   useEffect(()=>{ load() },[])
   function load(){ api.get('/api/personnel/').then(r=>setRecords(r.data)).catch(()=>{}); }
 
   function resetModal(){
     setForm({
-      rank:'', badge_number:'', last_name:'', first_name:'', mi:'', suffix:'', unit:'RHQ', status:'Active', qlf:'', date_of_reassignment:'', designation:'', date_of_designation:'', highest_eligibility:'', contact_number:'', birthdate:'', religion:'', section:''
+      rank:'', badge_number:'', last_name:'', first_name:'', mi:'', suffix:'', unit:'RHQ', status:'Active', status_custom:'', nup_rank:'', nup_entry_number:'', qlf:'', date_of_reassignment:'', designation:'', date_of_designation:'', highest_eligibility:'', contact_number:'', birthdate:'', religion:'', section:''
     });
     setPds(null); setAppointment(null); setPromotion(null); setDesignation(null); setReassignment(null); setDiploma(null); setEligibility(null); setIper(null); setSaln(null); setPft(null); setRca(null);
     setPdsExisting(null); setAppointmentExisting(null); setPromotionExisting(null); setDesignationExisting(null); setReassignmentExisting(null); setDiplomaExisting(null); setEligibilityExisting(null); setIperExisting(null); setSalnExisting(null); setPftExisting(null); setRcaExisting(null);
@@ -156,6 +176,20 @@ export default function Form201(){
     }
     if (file.size > MAX_FILE_SIZE_BYTES) {
       alert(`File too large: ${file.name}. Max size is 10MB.`);
+      return null;
+    }
+    return file;
+  }
+  function validateImage(file){
+    if (!file) return null;
+    const max = 5 * 1024 * 1024;
+    const type = file.type || '';
+    if (!type.startsWith('image/')) {
+      alert('Unsupported signature file type. Please upload an image.');
+      return null;
+    }
+    if (file.size > max) {
+      alert('Signature file too large. Max 5MB.');
       return null;
     }
     return file;
@@ -284,6 +318,9 @@ export default function Form201(){
         suffix:p.suffix||'',
         unit:p.unit||'RHQ',
         status:p.status||'Active',
+        status_custom:p.status_custom||'',
+        nup_rank:p.nup_rank||'',
+        nup_entry_number:p.nup_entry_number||'',
         qlf:p.qlf||'',
         date_of_reassignment:p.date_of_reassignment||'',
         designation:p.designation||'',
@@ -322,7 +359,15 @@ export default function Form201(){
     }
   }
 
-  function checkRequiredPersonal(){ return form.rank.trim() && form.last_name.trim() && form.first_name.trim() && form.badge_number && form.badge_number.trim(); }
+  function checkRequiredPersonal(){ 
+    const basic = form.rank && form.last_name && form.first_name && form.birthdate && form.religion;
+    if (!basic) return false;
+    // If rank is NUP, require NUP-specific fields
+    if ((form.rank || '').toUpperCase() === 'NUP') {
+      if (!form.nup_rank || !form.nup_entry_number) return false;
+    }
+    return true;
+  }
 
   function checkRequiredDocs(){
     return true;
@@ -331,13 +376,16 @@ export default function Form201(){
   async function doSubmit(){
     const data = new FormData();
     data.append('rank', form.rank);
-    data.append('badge_number', form.badge_number || '');
+    if (form.badge_number) data.append('badge_number', form.badge_number);
     data.append('last_name', form.last_name);
     data.append('first_name', form.first_name);
     data.append('mi', form.mi || '');
     data.append('suffix', form.suffix || '');
     data.append('unit', form.unit);
     data.append('status', form.status);
+    if (form.status === 'Others' && form.status_custom) data.append('status_custom', form.status_custom);
+    if (form.nup_rank) data.append('nup_rank', form.nup_rank);
+    if (form.nup_entry_number) data.append('nup_entry_number', form.nup_entry_number);
     if (form.qlf) data.append('qlf', form.qlf);
     if (form.date_of_reassignment) data.append('date_of_reassignment', form.date_of_reassignment);
     if (form.designation) data.append('designation', form.designation);
@@ -378,6 +426,8 @@ export default function Form201(){
       }
       setShowModal(false);
       load();
+      // notify other pages (Dashboard) to refresh
+      try{ if (bump) bump(); }catch(e){}
     }catch(err){
       let message = err.message;
       const detail = err.response?.data?.detail;
@@ -547,6 +597,7 @@ export default function Form201(){
                 <button className="btn-close" onClick={()=>setConfirmCancel(true)}></button>
               </div>
               <div className="modal-body">
+                <div className="small text-muted mb-2">Fields marked with * are required.</div>
                 <ul className="nav nav-tabs mb-3">
                   <li className="nav-item"><button className={`nav-link ${activeTab==='personal' ? 'active':''}`} onClick={()=>setActiveTab('personal')}>Personal Information</button></li>
                   <li className="nav-item"><button className={`nav-link ${activeTab==='documents' ? 'active':''}`} onClick={()=>setActiveTab('documents')}>Documents (13 Required)</button></li>
@@ -568,7 +619,7 @@ export default function Form201(){
                         </select>
                       </div>
 
-                      <div className="col-md-4 mb-2"><label>Badge Number *</label><input className="form-control" value={form.badge_number} onChange={e=>setForm({...form,badge_number:e.target.value})} /></div>
+                      <div className="col-md-4 mb-2"><label>Badge Number</label><input className="form-control" value={form.badge_number} onChange={e=>setForm({...form,badge_number:e.target.value})} /></div>
 
                       <div className="col-md-4 mb-2"><label>Unit</label><select className="form-select" value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})}>{UNITS.map(u=> <option key={u}>{u}</option>)}</select></div>
 
@@ -578,8 +629,8 @@ export default function Form201(){
 
                       <div className="col-md-3 mb-2"><label>Suffix</label><input className="form-control" value={form.suffix} onChange={e=>setForm({...form,suffix:e.target.value})} /></div>
                       <div className="col-md-3 mb-2"><label>QLF</label><input className="form-control" value={form.qlf} onChange={e=>setForm({...form,qlf:e.target.value})} /></div>
-                      <div className="col-md-3 mb-2"><label>Birthdate</label><input type="date" className="form-control" value={form.birthdate} onChange={e=>setForm({...form,birthdate:e.target.value})} /></div>
-                      <div className="col-md-3 mb-2"><label>Religion</label><input className="form-control" value={form.religion} onChange={e=>setForm({...form,religion:e.target.value})} /></div>
+                      <div className="col-md-3 mb-2"><label>Birthdate *</label><input type="date" className="form-control" value={form.birthdate} onChange={e=>setForm({...form,birthdate:e.target.value})} /></div>
+                      <div className="col-md-3 mb-2"><label>Religion *</label><input className="form-control" value={form.religion} onChange={e=>setForm({...form,religion:e.target.value})} /></div>
 
                       <div className="col-md-4 mb-2"><label>Designation</label><input className="form-control" value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})} /></div>
                       <div className="col-md-4 mb-2"><label>Date of Designation</label><input type="date" className="form-control" value={form.date_of_designation} onChange={e=>setForm({...form,date_of_designation:e.target.value})} /></div>
@@ -587,8 +638,31 @@ export default function Form201(){
 
                       <div className="col-md-4 mb-2"><label>Highest Eligibility</label><input className="form-control" value={form.highest_eligibility} onChange={e=>setForm({...form,highest_eligibility:e.target.value})} /></div>
                       <div className="col-md-4 mb-2"><label>Contact Number</label><input className="form-control" value={form.contact_number} onChange={e=>setForm({...form,contact_number:e.target.value})} /></div>
-                      <div className="col-md-4 mb-2"><label>Section</label><select className="form-select" value={form.section} onChange={e=>setForm({...form,section:e.target.value})}><option value="">Regional Office</option><option>Regional Office</option><option>Admin and HRDD Section</option><option>Intelligence Section</option></select></div>
-                      <div className="col-md-12 mb-2"><label>Status</label><select className="form-select" value={form.status} onChange={e=>setForm({...form,status:e.target.value})}>{STATUS.map(s=> <option key={s}>{s}</option>)}</select></div>
+                      <div className="col-md-4 mb-2">
+                        { (form.unit === 'RHQ' || form.unit === 'Headquarters') ? (
+                          <>
+                            <label>Section</label>
+                            <select className="form-select" value={form.section} onChange={e=>setForm({...form,section:e.target.value})}>
+                              <option value="">Office of the Regional Chief</option>
+                              <option>Office of the Regional Chief</option>
+                              <option>Admin and HRDD Section</option>
+                              <option>Intelligence Section</option>
+                              <option>Investigation Section</option>
+                              <option>Operation &amp; PCR Section</option>
+                            </select>
+                          </>
+                        ) : null }
+                      </div>
+                      <div className="col-md-8 mb-2"><label>Status</label><select className="form-select" value={form.status} onChange={e=>setForm({...form,status:e.target.value})}>{STATUS.map(s=> <option key={s}>{s}</option>)}</select></div>
+                      { form.status === 'Others' && (
+                        <div className="col-md-12 mb-2"><label>Specify Status</label><input className="form-control" value={form.status_custom} onChange={e=>setForm({...form,status_custom:e.target.value})} /></div>
+                      )}
+                      { form.rank === 'NUP' && (
+                        <>
+                          <div className="col-md-6 mb-2"><label>NUP Rank *</label><input className="form-control" value={form.nup_rank} onChange={e=>setForm({...form,nup_rank:e.target.value})} /></div>
+                          <div className="col-md-6 mb-2"><label>Entry Number *</label><input className="form-control" type="number" value={form.nup_entry_number} onChange={e=>setForm({...form,nup_entry_number:e.target.value})} /></div>
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -702,79 +776,150 @@ export default function Form201(){
 
       {showReportModal && (
         <div className="modal d-block" tabIndex={-1}>
-          <div className="modal-dialog modal-sm">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">Generate Form 201 Report</h5>
-                <button className="btn-close" onClick={()=>setShowReportModal(false)}></button>
-              </div>
-              <div className="modal-body">
-                <div className="mb-2">
-                  <label>Unit</label>
-                  <select className="form-select" value={reportUnit} onChange={e=>setReportUnit(e.target.value)}>
-                    <option>All Units</option>
-                    {UNITS.map(u=> <option key={u}>{u}</option>)}
-                  </select>
+            <div className="modal-dialog modal-lg">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Generate Form 201 Report</h5>
+                  <button className="btn-close" onClick={()=>setShowReportModal(false)}></button>
                 </div>
-                <div className="mb-2">
-                  <label>Status</label>
-                  <select className="form-select" value={reportStatus} onChange={e=>setReportStatus(e.target.value)}>
-                    <option>All Status</option>
-                    {STATUS.map(s=> <option key={s}>{s}</option>)}
-                  </select>
+                <div className="modal-body">
+                  <ul className="nav nav-tabs mb-3">
+                    <li className="nav-item"><button className={`nav-link ${reportModalTab==='report'? 'active':''}`} onClick={()=>setReportModalTab('report')}>Report</button></li>
+                    <li className="nav-item"><button className={`nav-link ${reportModalTab==='auth'? 'active':''}`} onClick={()=>setReportModalTab('auth')}>Authorized Values</button></li>
+                  </ul>
+
+                  {reportModalTab === 'report' && (
+                    <div className="row">
+                      <div className="col-md-6">
+                        <div className="mb-2">
+                          <label>Enter File Name</label>
+                          <input className="form-control" value={reportFileName} onChange={e=>setReportFileName(e.target.value)} placeholder="Filename (no extension)" />
+                          <div className="small text-muted mt-1">Filename will be used for the downloaded Excel file.</div>
+                        </div>
+
+                        <div className="mb-2">
+                          <label>Scope</label>
+                          <select className="form-select" value={reportScope} onChange={e=>setReportScope(e.target.value)}>
+                            <option>Overall</option>
+                            <option>RHQ only</option>
+                            <option>Specific Unit</option>
+                          </select>
+                        </div>
+
+                        {reportScope === 'Specific Unit' && (
+                          <div className="mb-2">
+                            <label>Specific Unit</label>
+                            <select className="form-select" value={reportSpecificUnit} onChange={e=>setReportSpecificUnit(e.target.value)}>
+                              {UNITS.map(u=> <option key={u} value={u}>{u}</option>)}
+                            </select>
+                          </div>
+                        )}
+
+                        <div className="mb-2">
+                          <label>As-of Date</label>
+                          <input type="date" className="form-control" value={reportAsOfDate} onChange={e=>setReportAsOfDate(e.target.value)} />
+                        </div>
+                        <div className="small text-muted">Current filters (Unit / Status) will be sent with the report if set.</div>
+                      </div>
+
+                      <div className="col-md-6">
+                        <div className="mb-2">
+                          <label>Prepared By</label>
+                          <input className="form-control mb-1" placeholder="Name" value={preparedByName} onChange={e=>setPreparedByName(e.target.value)} />
+                          <input className="form-control mb-1" placeholder="Title" value={preparedByTitle} onChange={e=>setPreparedByTitle(e.target.value)} />
+                          <input type="file" accept="image/*" className="form-control" onChange={e=>setPreparedBySignature(validateImage(e.target.files?.[0] || null))} />
+                        </div>
+
+                        <div className="mb-2">
+                          <label>Verified By</label>
+                          <input className="form-control mb-1" placeholder="Name" value={verifiedByName} onChange={e=>setVerifiedByName(e.target.value)} />
+                          <input className="form-control mb-1" placeholder="Title" value={verifiedByTitle} onChange={e=>setVerifiedByTitle(e.target.value)} />
+                          <input type="file" accept="image/*" className="form-control" onChange={e=>setVerifiedBySignature(validateImage(e.target.files?.[0] || null))} />
+                        </div>
+
+                        <div className="mb-2">
+                          <label>Noted By</label>
+                          <input className="form-control mb-1" placeholder="Name" value={notedByName} onChange={e=>setNotedByName(e.target.value)} />
+                          <input className="form-control mb-1" placeholder="Title" value={notedByTitle} onChange={e=>setNotedByTitle(e.target.value)} />
+                          <input type="file" accept="image/*" className="form-control" onChange={e=>setNotedBySignature(validateImage(e.target.files?.[0] || null))} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {reportModalTab === 'auth' && (
+                    <div>
+                      <div className="mb-3">
+                        <label className="fw-bold">PCO Values</label>
+                        <input className="form-control" value={authorizedPCO} onChange={e=>setAuthorizedPCO(e.target.value)} placeholder='e.g. {"PCO":10, "PCOL":2} or comma-separated' />
+                      </div>
+                      <div className="mb-3">
+                        <label className="fw-bold">PNCO Values</label>
+                        <input className="form-control" value={authorizedPNCO} onChange={e=>setAuthorizedPNCO(e.target.value)} placeholder='e.g. {"PNCO":5} or comma-separated' />
+                      </div>
+                      <div className="mb-3">
+                        <label className="fw-bold">Totals</label>
+                        <input className="form-control" value={authorizedTotals} onChange={e=>setAuthorizedTotals(e.target.value)} placeholder='e.g. {"TOTAL_PERSONNEL":81} or a number' />
+                      </div>
+                      <div className="small text-muted">These values override defaults when provided. Provide as JSON string for full control.</div>
+                    </div>
+                  )}
                 </div>
-                <div className="mb-2">
-                  <label>Report Type</label>
-                  <select className="form-select" defaultValue="excel">
-                    <option value="excel">Excel (.xlsx)</option>
-                    <option value="pdf">PDF (Form 201)</option>
-                  </select>
+                <div className="modal-footer">
+                  <button className="btn btn-secondary" onClick={()=>setShowReportModal(false)}>Cancel</button>
+                  <button className="btn btn-primary" disabled={!reportFileName.trim()} onClick={async ()=>{
+                    try{
+                      const fd = new FormData();
+                      fd.append('file_name', reportFileName.trim());
+                      fd.append('report_type', 'excel');
+                      // include current filters
+                      if (unitFilter && unitFilter !== 'All Units') fd.append('unit', unitFilter);
+                      if (statusFilter && statusFilter !== 'All Status') fd.append('status', statusFilter);
+                      // scope and specific unit
+                      if (reportScope) fd.append('scope', reportScope);
+                      if (reportScope === 'Specific Unit' && reportSpecificUnit) fd.append('specific_unit', reportSpecificUnit);
+                      if (reportAsOfDate) fd.append('as_of_date', reportAsOfDate);
+                      // signatories
+                      if (preparedByName) fd.append('prepared_by_name', preparedByName);
+                      if (preparedByTitle) fd.append('prepared_by_title', preparedByTitle);
+                      if (preparedBySignature) fd.append('prepared_by_signature', preparedBySignature);
+                      if (verifiedByName) fd.append('verified_by_name', verifiedByName);
+                      if (verifiedByTitle) fd.append('verified_by_title', verifiedByTitle);
+                      if (verifiedBySignature) fd.append('verified_by_signature', verifiedBySignature);
+                      if (notedByName) fd.append('noted_by_name', notedByName);
+                      if (notedByTitle) fd.append('noted_by_title', notedByTitle);
+                      if (notedBySignature) fd.append('noted_by_signature', notedBySignature);
+                      // authorized values: prefer structured inputs
+                      if (authorizedPCO || authorizedPNCO || authorizedTotals) {
+                        const auth = {};
+                        if (authorizedPCO) auth.PCO = authorizedPCO;
+                        if (authorizedPNCO) auth.PNCO = authorizedPNCO;
+                        if (authorizedTotals) auth.TOTALS = authorizedTotals;
+                        fd.append('authorized_values', JSON.stringify(auth));
+                      } else if (authorizedValues) {
+                        fd.append('authorized_values', authorizedValues);
+                      }
+
+                      const res = await api.post('/api/personnel/report', fd, { responseType: 'blob' });
+                      const disposition = res.headers && (res.headers['content-disposition'] || res.headers['Content-Disposition']);
+                      let filename = '';
+                      if (disposition) {
+                        const m = disposition.match(/filename=(?:")?([^;\"]+)/i);
+                        if (m && m[1]) filename = m[1].trim();
+                      }
+                      if (!filename) filename = `${reportFileName.trim()}.xlsx`;
+                      const url = window.URL.createObjectURL(new Blob([res.data]));
+                      const a = document.createElement('a');
+                      a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+                      setShowReportModal(false);
+                    }catch(err){
+                      alert('Error generating report');
+                    }
+                  }}>Generate</button>
                 </div>
-                <div className="mb-2">
-                  <label>Prepared by</label>
-                  <input className="form-control" value={reportPreparedBy} onChange={e=>setReportPreparedBy(e.target.value)} placeholder="Prepared by" />
-                </div>
-                <div className="mb-2">
-                  <label>Noted by</label>
-                  <input className="form-control" value={reportNotedBy} onChange={e=>setReportNotedBy(e.target.value)} placeholder="Noted by" />
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button className="btn btn-secondary" onClick={()=>setShowReportModal(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={async ()=>{
-                  try{
-                    const fd = new FormData();
-                    fd.append('unit', reportUnit);
-                    fd.append('status', reportStatus);
-                    fd.append('prepared_by', reportPreparedBy || '');
-                    fd.append('noted_by', reportNotedBy || '');
-                    // Default: Excel
-                    if (false) fd.append('report_type', 'excel');
-                    const res = await api.post('/api/personnel/report', fd, { responseType: 'blob' });
-                    const url = window.URL.createObjectURL(new Blob([res.data]));
-                    const a = document.createElement('a');
-                    a.href = url; a.download = 'form201_report.xlsx'; document.body.appendChild(a); a.click(); a.remove();
-                    setShowReportModal(false);
-                  }catch(err){ alert('Error generating report'); }
-                }}>Generate Excel</button>
-                <button className="btn btn-outline-primary" onClick={async ()=>{
-                  try{
-                    const fd = new FormData();
-                    fd.append('unit', reportUnit);
-                    fd.append('status', reportStatus);
-                    fd.append('prepared_by', reportPreparedBy || '');
-                    fd.append('noted_by', reportNotedBy || '');
-                    const res = await api.post('/api/personnel/form201-pdf', fd, { responseType: 'blob' });
-                    const url = window.URL.createObjectURL(new Blob([res.data]));
-                    const a = document.createElement('a');
-                    a.href = url; a.download = 'form201_report.pdf'; document.body.appendChild(a); a.click(); a.remove();
-                    setShowReportModal(false);
-                  }catch(err){ alert('Error generating PDF report'); }
-                }}>Generate PDF</button>
               </div>
             </div>
           </div>
-        </div>
       )}
 
       {confirmCancel && (

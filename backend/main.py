@@ -83,6 +83,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CIDG RFU4A Personnel System API", lifespan=lifespan)
 
+# Configure CORS FIRST - must be added before routes for proper middleware chain
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # mount uploads so frontend can access files (use project-level uploads folder)
 BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOADS_DIR = BASE_DIR / 'uploads'
@@ -91,15 +100,6 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 app.include_router(personnel_router, prefix="/api/personnel")
 app.include_router(bmi_router, prefix="/api/bmi")
-
-# add CORS for frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 @app.get("/")
 def root():

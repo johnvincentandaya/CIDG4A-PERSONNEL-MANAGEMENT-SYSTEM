@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from typing import Dict, List, Optional, Tuple
-from sqlalchemy import text
+from sqlalchemy import text, extract
 from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import SessionLocal
@@ -121,6 +121,22 @@ def run_migrations():
             conn.commit()
         except Exception as e:
             print(f"Warning: Could not initialize is_latest: {e}")
+            pass
+        # NEW: Add status columns for BMI records
+        try:
+            conn.execute(text("""
+                ALTER TABLE bmi_records ADD COLUMN status TEXT DEFAULT 'Active'
+            """))
+            conn.commit()
+        except Exception:
+            pass
+
+        try:
+            conn.execute(text("""
+                ALTER TABLE bmi_records ADD COLUMN status_custom TEXT
+            """))
+            conn.commit()
+        except Exception:
             pass
     
     engine.dispose()
@@ -336,263 +352,230 @@ def draw_record_pdf_page(
     noted_by: str = "",
 ) -> None:
     """
-    Draw Individual BMI Monitoring Form - STRICT FIXED LAYOUT
-    Uses canvas drawing with EXACT coordinates to ensure ONE page only.
+    Rebuilt layout for Individual BMI Monitoring Form.
+    Strict structured layout: header, photos (L), personnel details (R),
+    classification + intervention, monthly monitoring table, signatures.
     """
-    # Landscape letter: 792 x 612 points
     width, height = landscape(letter)
-    
-    # FIXED MARGINS
-    M = 18  # All margins
-    content_w = width - 2 * M  # 756
-    
-    # FIXED SECTION HEIGHTS (carefully calculated to fit on one page)
-    TITLE_H = 18
-    PHOTOS_H = 65
-    PHOTO_LABEL_H = 10
-    PHOTO_BLOCK_H = PHOTOS_H + PHOTO_LABEL_H  # 75
-    
-    DETAILS_ROW_H = 14
-    DETAILS_HEADER_H = 12
-    DETAILS_DATA_ROWS = 10
-    DETAILS_TOTAL_H = DETAILS_HEADER_H + (DETAILS_ROW_H * DETAILS_DATA_ROWS)  # 152
-    
-    UPPER_SECTION_H = max(PHOTO_BLOCK_H, DETAILS_TOTAL_H)  # 152
-    
-    BMI_RESULT_H = 24
-    
-    MIDDLE_SECTION_H = 45
-    
-    MONTHLY_TITLE_H = 12
-    MONTHLY_ROW_H = 13
-    MONTHLY_TOTAL_H = MONTHLY_TITLE_H + (MONTHLY_ROW_H * 3)  # 51
-    
-    FOOTER_H = 20
-    
-    # Calculate total height to verify it fits
-    # Title + gap + Upper section + gap + BMI result + gap + Middle + gap + Monthly + gap + Footer
-    # 18 + 5 + 152 + 5 + 24 + 5 + 45 + 5 + 51 + 5 + 20 = 335
-    # Page height = 612, we have 612 - 2*18 = 576 usable
-    # Should fit easily
-    
-    # Calculate Y positions (from top)
-    y = height - M  # Start at top margin
-    
+    M = 18
+    content_x = M
+    content_w = width - 2 * M
+
+    # --- Title ---
+    c.setFont("Helvetica-Bold", 13)
+    c.drawCentredString(width / 2, height - M - 6, "INDIVIDUAL BMI MONITORING FORM")
+
+    # Compute core metrics
     bmi_value = compute_bmi(rec.weight_kg or 0, rec.height_cm or 0)
     pnp_classification = classify_pnp_bmi(bmi_value, rec.age or 0)
     who_classification = classify_who_bmi(bmi_value)
     metrics = compute_weight_metrics(rec.height_cm or 0, rec.weight_kg or 0, rec.age or 0)
     intervention = INTERVENTION_PACKAGE_MAP.get(pnp_classification, {"package": "", "duration": "", "recommendation": ""})
-    
-    # ========== TITLE ==========
-    y -= TITLE_H
-    c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(width / 2, y, "INDIVIDUAL BMI MONITORING FORM")
-    
-    y -= 8  # Gap
-    
-    # ========== UPPER SECTION ==========
-    # Photos: LEFT side (40% width)
-    photo_section_w = content_w * 0.40
-    # Details: RIGHT side (60% width)
-    details_section_w = content_w * 0.60
-    details_x = M + photo_section_w + 5
-    details_w = details_section_w - 5
-    
-    photo_w = photo_section_w / 3 - 2
-    
-    # --- PHOTOS ---
-    photo_start_y = y
-    
+
+    # Starting Y below title
+    y_top = height - M - 28
+
+    # --- Upper section: Photos (left) and Personnel Details (right) ---
+    photo_section_w = content_w * 0.48
+    details_section_w = content_w - photo_section_w - 10
+    photo_x = content_x
+    details_x = content_x + photo_section_w + 10
+
+    # Photos layout
+    photo_h = 72
+    photo_label_h = 10
+    gap_between_photos = 6
+    photo_w = (photo_section_w - (2 * gap_between_photos)) / 3
+    photos_top = y_top
+    photos_bottom = photos_top - photo_h - photo_label_h
+
     image_specs = [
         ("Right View", resolve_upload_path(rec.photo_right)),
         ("Front View", resolve_upload_path(rec.photo_front)),
         ("Left View", resolve_upload_path(rec.photo_left)),
     ]
-    
+
     for i, (label, image_path) in enumerate(image_specs):
-        x = M + i * (photo_w + 2)
-        
-        # Draw border
+        ix = photo_x + i * (photo_w + gap_between_photos)
+        iy = photos_bottom + photo_label_h
+        # border
         c.setStrokeColor(colors.black)
-        c.setLineWidth(0.5)
-        c.rect(x, y - PHOTOS_H, photo_w, PHOTOS_H, stroke=1, fill=0)
-        
-        # Draw image
+        c.setLineWidth(0.6)
+        c.rect(ix, iy, photo_w, photo_h, stroke=1, fill=0)
+        # image
         if image_path and os.path.exists(image_path):
             try:
-                c.drawImage(image_path, x + 1, y - PHOTOS_H + 1,
-                           width=photo_w - 2, height=PHOTOS_H - 2,
-                           preserveAspectRatio=True, anchor='c')
+                c.drawImage(image_path, ix + 1, iy + 1, width=photo_w - 2, height=photo_h - 2, preserveAspectRatio=True, anchor='c')
             except Exception:
                 pass
-        
-        # Draw label
-        c.setFont("Helvetica", 6)
-        c.drawCentredString(x + photo_w/2, y - PHOTOS_H - PHOTO_LABEL_H + 3, label)
-    
-    y -= PHOTO_BLOCK_H  # Move down past photos
-    
-    # --- PERSONNEL DETAILS ---
-    details_y = y  # Start from same level as photos
-    
-    # Details header
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(details_x, details_y, "PERSONNEL DETAILS")
-    details_y -= DETAILS_ROW_H
-    
-    # Details rows
-    details_data = [
-        ("RANK/NAME", f"{rec.rank or ''} {rec.name or ''}".strip()),
+        # label
+        c.setFont("Helvetica", 7)
+        c.drawCentredString(ix + photo_w / 2, iy - 8, label)
+
+    # Personnel details table (right)
+    details_fields = [
+        ("RANK/NAME", f"{(rec.rank or '')} {(rec.name or '')}".strip()),
         ("UNIT", rec.unit or ""),
-        ("AGE", str(rec.age or "")),
-        ("HEIGHT", f"{(rec.height_cm or 0):.1f} cm"),
+        ("AGE", f"{rec.age or ''}"),
+        ("HEIGHT", f"{metrics.get('height_m', 0):.2f} m"),
         ("WEIGHT", f"{(rec.weight_kg or 0):.1f} kg"),
         ("WAIST", f"{(rec.waist_cm or 0):.1f} cm"),
         ("HIP", f"{(rec.hip_cm or 0):.1f} cm"),
         ("WRIST", f"{(rec.wrist_cm or 0):.1f} cm"),
         ("GENDER", rec.sex or ""),
         ("DATE TAKEN", rec.date_taken.strftime("%Y-%m-%d") if rec.date_taken else ""),
+        ("BMI RESULT", f"{bmi_value:.2f}"),
+        ("NORMAL WT RANGE", f"{metrics['normal_min_weight']:.1f} - {metrics['normal_max_weight']:.1f} kg"),
+        ("WEIGHT TO LOSE", f"{metrics['weight_to_lose']:.1f} kg"),
     ]
-    
-    label_w = details_w * 0.40
-    
-    c.setFont("Helvetica", 6)
-    for label, value in details_data:
-        # Draw row
+
+    details_row_h = 13
+    label_w = details_section_w * 0.45
+    cur_y = y_top
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(details_x, cur_y, "PERSONNEL DETAILS")
+    cur_y -= 14
+    c.setFont("Helvetica", 8)
+    for label, value in details_fields:
+        # row rectangle
         c.setStrokeColor(colors.black)
-        c.rect(details_x, details_y, details_w, DETAILS_ROW_H, stroke=1, fill=0)
-        
-        # Draw vertical separator
-        c.line(details_x + label_w, details_y, details_x + label_w, details_y + DETAILS_ROW_H)
-        
-        # Draw text
-        c.setFont("Helvetica-Bold", 6)
-        c.drawString(details_x + 2, details_y + 4, label)
-        c.setFont("Helvetica", 6)
-        c.drawString(details_x + label_w + 2, details_y + 4, value)
-        
-        details_y -= DETAILS_ROW_H
-    
-    # Move y to below whichever is taller (photos or details)
-    y = min(y, details_y) - 5  # 5pt gap
-    
-    # ========== BMI RESULT BOX ==========
-    y -= BMI_RESULT_H
+        c.setLineWidth(0.5)
+        c.rect(details_x, cur_y - details_row_h, details_section_w, details_row_h, stroke=1, fill=0)
+        # vertical separator
+        c.line(details_x + label_w, cur_y - details_row_h, details_x + label_w, cur_y)
+        # label (left), value (right-aligned)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawString(details_x + 4, cur_y - details_row_h + 3, label)
+        c.setFont("Helvetica", 7)
+        c.drawRightString(details_x + details_section_w - 6, cur_y - details_row_h + 3, value)
+        cur_y -= details_row_h
+
+    # Determine lower Y of upper section
+    upper_bottom = min(photos_bottom, cur_y)
+
+    # --- Middle section: Classification (left two columns) + Intervention (right) ---
+    mid_gap = 10
+    class_area_w = content_w * 0.62
+    interv_area_w = content_w - class_area_w - mid_gap
+    class_x = content_x
+    class_y = upper_bottom - 12
+    class_h = 60
+    interv_x = class_x + class_area_w + mid_gap
+    # classification box
     c.setStrokeColor(colors.black)
-    c.setLineWidth(1)
-    c.rect(M, y, content_w, BMI_RESULT_H, stroke=1, fill=0)
-    
+    c.rect(class_x, class_y - class_h, class_area_w, class_h, stroke=1, fill=0)
+    # inside classification split into two columns: PNP (left) & WHO (right)
+    sub_w = class_area_w / 2
+    # headers
     c.setFont("Helvetica-Bold", 8)
-    c.drawString(M + 5, y + 8, "BMI RESULT:")
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(M + 70, y + 5, f"{bmi_value:.2f}")
-    
-    c.setFont("Helvetica", 6)
-    c.drawString(M + 150, y + 15, f"Normal Weight Range: {metrics['normal_min_weight']:.1f} - {metrics['normal_max_weight']:.1f} kg")
-    c.drawString(M + 150, y + 5, f"Weight to Lose: {metrics['weight_to_lose']:.1f} kg")
-    
-    y -= 5  # Gap
-    
-    # ========== MIDDLE SECTION: CLASSIFICATION + INTERVENTION ==========
-    y -= MIDDLE_SECTION_H
-    
-    class_w = content_w * 0.40
-    interv_w = content_w * 0.60
-    interv_x = M + class_w + 5
-    
-    # BMI Classification box
+    c.drawCentredString(class_x + sub_w / 2, class_y - 10, "PNP BMI Acceptable Standard")
+    c.drawCentredString(class_x + sub_w + sub_w / 2, class_y - 10, "WHO Standard")
+    # classification values
+    c.setFont("Helvetica-Bold", 11)
+    c.drawCentredString(class_x + sub_w / 2, class_y - 30, pnp_classification)
+    c.drawCentredString(class_x + sub_w + sub_w / 2, class_y - 30, who_classification)
+
+    # intervention box
     c.setStrokeColor(colors.black)
-    c.rect(M, y, class_w, MIDDLE_SECTION_H, stroke=1, fill=0)
-    
-    c.setFont("Helvetica-Bold", 7)
-    c.drawCentredString(M + class_w/2, y + MIDDLE_SECTION_H - 10, "BMI CLASSIFICATION")
-    
-    c.setFont("Helvetica", 6)
-    c.drawString(M + 5, y + MIDDLE_SECTION_H - 22, "PNP BMI Acceptable Standard:")
+    c.rect(interv_x, class_y - class_h, interv_area_w, class_h, stroke=1, fill=0)
     c.setFont("Helvetica-Bold", 8)
-    c.drawCentredString(M + class_w/2, y + MIDDLE_SECTION_H - 32, pnp_classification)
-    
-    c.setFont("Helvetica", 6)
-    c.drawString(M + 5, y + MIDDLE_SECTION_H - 42, "WHO Standard:")
-    c.setFont("Helvetica-Bold", 7)
-    c.drawCentredString(M + class_w/2, y + MIDDLE_SECTION_H - 52, who_classification)
-    
-    # Intervention box
-    c.setStrokeColor(colors.black)
-    c.rect(interv_x, y, interv_w, MIDDLE_SECTION_H, stroke=1, fill=0)
-    
-    c.setFont("Helvetica-Bold", 7)
-    c.drawCentredString(interv_x + interv_w/2, y + MIDDLE_SECTION_H - 10, "INTERVENTION PACKAGE")
-    
-    c.setFont("Helvetica", 6)
-    c.drawString(interv_x + 5, y + MIDDLE_SECTION_H - 22, f"Package: {intervention['package']}")
-    c.drawString(interv_x + 5, y + MIDDLE_SECTION_H - 32, f"Duration: {intervention['duration']}")
-    c.drawString(interv_x + 5, y + MIDDLE_SECTION_H - 42, f"Recommendation: {intervention['recommendation']}")
-    
-    y -= 5  # Gap
-    
-    # ========== MONTHLY WEIGHT MONITORING TABLE ==========
-    y -= MONTHLY_TOTAL_H
-    
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(M, y + MONTHLY_TOTAL_H - 10, "MONTHLY WEIGHT MONITORING")
-    
-    table_x = M
+    c.drawCentredString(interv_x + interv_area_w / 2, class_y - 10, "INTERVENTION PACKAGE")
+    c.setFont("Helvetica", 8)
+    c.drawString(interv_x + 6, class_y - 28, f"Package: {intervention.get('package','')}")
+    c.drawString(interv_x + 6, class_y - 40, f"Duration: {intervention.get('duration','')}")
+    c.drawString(interv_x + 6, class_y - 52, f"Recommendation: {intervention.get('recommendation','')}")
+
+    # --- Monthly weight monitoring table ---
+    table_top = class_y - class_h - 14
+    table_x = content_x
     table_w = content_w
-    col_w = (table_w - 35) / TOTAL_MONTH_COLUMNS  # Row labels take 35 pts
-    
+    col_w = table_w / TOTAL_MONTH_COLUMNS
+    year_row_h = 16
+    month_row_h = 14
+    weight_row_h = 14
+    table_h = year_row_h + month_row_h + weight_row_h
+
     months = build_month_columns(rec.date_taken or datetime.utcnow())
     monthly_weight_map = load_monthly_weight_map(db, rec)
-    
-    row_labels = ["YEAR", "MONTH", "WEIGHT"]
-    row_data = [[], [], []]
-    
-    for year, month in months:
-        row_data[0].append(str(year))
-        row_data[1].append(calendar.month_abbr[month])
-        weight = monthly_weight_map.get((year, month), "")
-        row_data[2].append(f"{weight:.1f}" if weight not in ("", None) else "-")
-    
-    # Draw table
-    row_y = [y + MONTHLY_TOTAL_H - MONTHLY_TITLE_H - MONTHLY_ROW_H,
-             y + MONTHLY_TOTAL_H - MONTHLY_TITLE_H - MONTHLY_ROW_H * 2,
-             y + MONTHLY_TOTAL_H - MONTHLY_TITLE_H - MONTHLY_ROW_H * 3]
-    
-    for row_idx, (row_label, values) in enumerate(zip(row_labels, row_data)):
-        # Row label
-        c.setFont("Helvetica-Bold", 5)
-        c.drawString(table_x - 28, row_y[row_idx] + 4, row_label)
-        
-        for col_idx, value in enumerate(values):
-            x = table_x + col_idx * col_w
-            
-            # Draw cell
-            c.setStrokeColor(colors.black)
-            c.rect(x, row_y[row_idx], col_w, MONTHLY_ROW_H, stroke=1, fill=0)
-            
-            # Draw value
-            c.setFont("Helvetica", 5)
-            c.drawCentredString(x + col_w/2, row_y[row_idx] + 4, str(value))
-    
-    y -= 5  # Gap before footer
-    
-    # ========== FOOTER ==========
-    sig_y = M + 10
-    sig_line_w = 120
-    
-    c.setFont("Helvetica-Bold", 6)
-    c.drawString(M, sig_y, "Certified Correct:")
-    c.line(M + 55, sig_y, M + 55 + sig_line_w, sig_y)
-    c.setFont("Helvetica", 5)
-    c.drawCentredString(M + 55 + sig_line_w/2, sig_y - 6, "Signature over Printed Name")
-    
+
+    # Draw YEAR row with grouped year spans
+    # Group consecutive months by year
+    groups = []
+    if months:
+        curr_year = months[0][0]
+        start_idx = 0
+        for idx, (yr, mo) in enumerate(months):
+            if yr != curr_year:
+                groups.append((curr_year, start_idx, idx - start_idx))
+                curr_year = yr
+                start_idx = idx
+        groups.append((curr_year, start_idx, len(months) - start_idx))
+
+    # Year row
+    y_year = table_top
+    c.setFont("Helvetica-Bold", 8)
+    for year_val, start_col, span in groups:
+        gx = table_x + start_col * col_w
+        gw = span * col_w
+        c.rect(gx, y_year - year_row_h, gw, year_row_h, stroke=1, fill=0)
+        c.drawCentredString(gx + gw / 2, y_year - year_row_h + 4, str(year_val))
+
+    # Month row
+    y_month = y_year - year_row_h
+    c.setFont("Helvetica", 8)
+    for idx, (yr, mo) in enumerate(months):
+        mx = table_x + idx * col_w
+        c.rect(mx, y_month - month_row_h, col_w, month_row_h, stroke=1, fill=0)
+        c.drawCentredString(mx + col_w / 2, y_month - month_row_h + 4, calendar.month_abbr[mo])
+
+    # Weight row
+    y_weight = y_month - month_row_h
+    c.setFont("Helvetica", 8)
+    for idx, (yr, mo) in enumerate(months):
+        wx = table_x + idx * col_w
+        c.rect(wx, y_weight - weight_row_h, col_w, weight_row_h, stroke=1, fill=0)
+        wval = monthly_weight_map.get((yr, mo), None)
+        display = f"{wval:.1f}" if (wval is not None and wval != "") else "-"
+        c.drawCentredString(wx + col_w / 2, y_weight - weight_row_h + 4, display)
+
+    # Label for table
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(table_x, y_year + 6, "MONTHLY WEIGHT MONITORING")
+
+    # --- Signatures ---
+    sig_y = M + 20
+    sig_block_w = (content_w - 24) / 3
+    left_x = content_x
+    center_x = content_x + sig_block_w + 12
+    right_x = content_x + (sig_block_w + 12) * 2
+    line_w = 140
+
+    # Certified Correct (left)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(left_x, sig_y + 30, "Certified Correct")
+    c.line(left_x, sig_y + 12, left_x + line_w, sig_y + 12)
+    c.setFont("Helvetica", 7)
+    c.drawCentredString(left_x + line_w / 2, sig_y, "Signature over Printed Name")
+
+    # Prepared by (center)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(center_x, sig_y + 30, "Prepared by")
+    c.line(center_x, sig_y + 12, center_x + line_w, sig_y + 12)
+    c.setFont("Helvetica", 7)
     if prepared_by:
-        c.setFont("Helvetica-Bold", 6)
-        c.drawRightString(width - M, sig_y, f"Prepared by: {prepared_by}")
+        c.drawCentredString(center_x + line_w / 2, sig_y - 2, prepared_by)
+    else:
+        c.drawCentredString(center_x + line_w / 2, sig_y - 2, "")
+
+    # Noted by (right)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(right_x, sig_y + 30, "Noted by")
+    c.line(right_x, sig_y + 12, right_x + line_w, sig_y + 12)
+    c.setFont("Helvetica", 7)
     if noted_by:
-        c.setFont("Helvetica-Bold", 6)
-        c.drawRightString(width - M, sig_y - 8, f"Noted by: {noted_by}")
+        c.drawCentredString(right_x + line_w / 2, sig_y - 2, noted_by)
+    else:
+        c.drawCentredString(right_x + line_w / 2, sig_y - 2, "")
 
 
 @router.post('/', response_model=schemas.BMISchema)
@@ -608,6 +591,8 @@ async def create_bmi(
     hip_cm: Optional[float] = Form(None),
     wrist_cm: Optional[float] = Form(None),
     date_taken: Optional[str] = Form(None),
+    status: str = Form('Active'),
+    status_custom: Optional[str] = Form(None),
     photo_front: UploadFile = File(...),
     photo_left: UploadFile = File(...),
     photo_right: UploadFile = File(...),
@@ -640,6 +625,18 @@ async def create_bmi(
     pnp_classification = classify_pnp_bmi(bmi_value, age)
     parsed_date_taken = parse_date_taken(date_taken)
     
+    # Determine the effective date (today if not provided)
+    effective_date = parsed_date_taken or datetime.utcnow()
+
+    # VALIDATION: Do not allow duplicate BMI entries for the same person for the same month
+    existing_same_month = db.query(models.BMIRecord).filter(
+        models.BMIRecord.name.ilike(name),
+        extract('month', models.BMIRecord.date_taken) == effective_date.month,
+        extract('year', models.BMIRecord.date_taken) == effective_date.year
+    ).first()
+    if existing_same_month:
+        raise HTTPException(status_code=400, detail="A BMI record already exists for this person for the selected month. You can edit the existing record instead.")
+
     # NEW: Find and mark existing latest records for this personnel as NOT latest
     # First try to find by name (case-insensitive match)
     existing_latest = db.query(models.BMIRecord).filter(
@@ -659,6 +656,8 @@ async def create_bmi(
         photo_front=f"{folder_rel}/{front_name}".replace("\\","/"),
         photo_left=f"{folder_rel}/{left_name}".replace("\\","/"),
         photo_right=f"{folder_rel}/{right_name}".replace("\\","/"),
+        status=status,
+        status_custom=status_custom,
         is_latest=True,  # NEW: Mark as latest
     )
     db.add(record)
@@ -683,6 +682,7 @@ def bmi_report(
     unit: Optional[str] = Form(None),
     prepared_by: str = Form(''),
     noted_by: str = Form(''),
+    status: Optional[str] = Form(None),
     report_type: str = Form('pdf'),
     file_name: str = Form('bmi_report'),
     db: Session = Depends(get_db),
@@ -696,6 +696,44 @@ def bmi_report(
         from sqlalchemy import extract
         q = q.filter(extract('month', models.BMIRecord.date_taken) == month, extract('year', models.BMIRecord.date_taken) == year)
     records = q.order_by(models.BMIRecord.date_taken.desc()).all()
+
+    # Filter BMI records to include only those whose personnel are ACTIVE by default
+    filtered_records = []
+    for rec in records:
+        include = False
+        # Prefer explicit personnel_id linkage
+        if getattr(rec, 'personnel_id', None):
+            p = db.query(models.Personnel).filter(models.Personnel.id == rec.personnel_id).first()
+            if p and (p.status or '').upper() == 'ACTIVE':
+                include = True
+        else:
+            # Try to match by name: first token -> first name, last token -> last name
+            name = (rec.name or '').strip()
+            if name:
+                parts = name.upper().split()
+                if len(parts) >= 2:
+                    first = parts[0]
+                    last = parts[-1]
+                    p = db.query(models.Personnel).filter(models.Personnel.first_name == first, models.Personnel.last_name == last).first()
+                    if p and (p.status or '').upper() == 'ACTIVE':
+                        include = True
+        if include:
+            # Apply BMI-record status filtering
+            rec_status = (getattr(rec, 'status', None) or '').strip()
+            if status:
+                # If caller requested a specific BMI record status, enforce it
+                if rec_status.upper() == status.upper():
+                    filtered_records.append(rec)
+                else:
+                    # treat missing rec_status as 'Active' for comparison
+                    if not rec_status and status.upper() == 'ACTIVE':
+                        filtered_records.append(rec)
+            else:
+                # Default behavior: include only records that are Active (or have no status set)
+                if not rec_status or rec_status.upper() == 'ACTIVE':
+                    filtered_records.append(rec)
+
+    records = filtered_records
     safe_base_name = safe_filename(file_name, 'bmi_report')
 
     if report_type.lower() == 'excel':
@@ -824,6 +862,7 @@ def list_bmi(
     exact_date: Optional[str] = None,
     search: Optional[str] = None,
     latest_only: bool = False,
+    status: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -876,6 +915,13 @@ def list_bmi(
     if latest_only:
         # NEW: Use is_latest flag for filtering - reliable one-per-personnel approach
         q = q.filter(models.BMIRecord.is_latest == True)
+
+    # Apply status filtering: if provided, use it; otherwise default to Active or unspecified
+    if status:
+        q = q.filter(func.upper(models.BMIRecord.status) == status.upper())
+    else:
+        from sqlalchemy import or_
+        q = q.filter(or_(models.BMIRecord.status == None, func.upper(models.BMIRecord.status) == 'ACTIVE'))
     
     return q.order_by(models.BMIRecord.date_taken.desc()).all()
 
@@ -1219,6 +1265,8 @@ async def update_bmi(
     hip_cm: Optional[float] = Form(None),
     wrist_cm: Optional[float] = Form(None),
     date_taken: Optional[str] = Form(None),
+    status: str = Form('Active'),
+    status_custom: Optional[str] = Form(None),
     photo_front: Optional[UploadFile] = File(None),
     photo_left: Optional[UploadFile] = File(None),
     photo_right: Optional[UploadFile] = File(None),
@@ -1245,6 +1293,25 @@ async def update_bmi(
     preserved_old_left = old_record.photo_left
     preserved_old_right = old_record.photo_right
     
+    # normalize incoming text fields for consistent matching
+    rank = rank.upper() if isinstance(rank, str) else rank
+    name = name.upper() if isinstance(name, str) else name
+    unit = unit.upper() if isinstance(unit, str) else unit
+    sex = sex.upper() if isinstance(sex, str) else sex
+
+    # Parse date early to enforce monthly uniqueness
+    parsed_date_check = parse_date_taken(date_taken) if date_taken else datetime.utcnow()
+
+    # VALIDATION: Prevent duplicate BMI records for same person in the same month (excluding current record)
+    dup = db.query(models.BMIRecord).filter(
+        models.BMIRecord.name.ilike(name),
+        extract('month', models.BMIRecord.date_taken) == parsed_date_check.month,
+        extract('year', models.BMIRecord.date_taken) == parsed_date_check.year,
+        models.BMIRecord.id != record_id
+    ).first()
+    if dup:
+        raise HTTPException(status_code=400, detail='A BMI record already exists for this person for the selected month. You can edit the existing record instead.')
+
     # NEW: Mark the old record as NOT latest
     old_record.is_latest = False
     db.commit()
@@ -1305,11 +1372,11 @@ async def update_bmi(
         INSERT INTO bmi_records (
             personnel_id, rank, name, unit, age, sex, height_cm, weight_kg,
             waist_cm, hip_cm, wrist_cm, date_taken, bmi, classification, result,
-            photo_front, photo_left, photo_right, is_latest
+            photo_front, photo_left, photo_right, status, status_custom, is_latest
         ) VALUES (
             :personnel_id, :rank, :name, :unit, :age, :sex, :height_cm, :weight_kg,
             :waist_cm, :hip_cm, :wrist_cm, :date_taken, :bmi, :classification, :result,
-            :photo_front, :photo_left, :photo_right, :is_latest
+            :photo_front, :photo_left, :photo_right, :status, :status_custom, :is_latest
         )
     """)
     
@@ -1332,6 +1399,8 @@ async def update_bmi(
         'photo_front': front_photo_path,
         'photo_left': left_photo_path,
         'photo_right': right_photo_path,
+        'status': status,
+        'status_custom': status_custom,
         'is_latest': True,  # NEW: Mark new record as latest
     })
     

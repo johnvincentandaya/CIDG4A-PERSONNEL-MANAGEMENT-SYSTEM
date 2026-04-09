@@ -1,6 +1,7 @@
-import React, {useEffect, useState} from 'react';
-import { api, absolutizePath } from '../api';
+import React, {useEffect, useState, useContext} from 'react';
+import { api } from '../api';
 import { RANKS } from '../constants/ranks';
+import { RefreshContext } from '../contexts/RefreshContext';
 
 const UNITS = ['RHQ', 'Cavite', 'Laguna', 'Batangas', 'Rizal', 'Quezon'];
 
@@ -16,14 +17,14 @@ function classificationClass(name){
 export default function BMIMonitor(){
   const [records, setRecords] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({rank:'', name:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: ''});
+  const [form, setForm] = useState({rank:'', last_name:'', first_name:'', mi:'', suffix:'', qi:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
   const [front, setFront] = useState(null);
   const [left, setLeft] = useState(null);
   const [right, setRight] = useState(null);
 
   // Update modal state
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [updateForm, setUpdateForm] = useState({rank:'', name:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: ''});
+  const [updateForm, setUpdateForm] = useState({rank:'', last_name:'', first_name:'', mi:'', suffix:'', qi:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
   const [updateFront, setUpdateFront] = useState(null);
   const [updateLeft, setUpdateLeft] = useState(null);
   const [updateRight, setUpdateRight] = useState(null);
@@ -40,7 +41,7 @@ export default function BMIMonitor(){
   const [reportYear, setReportYear] = useState('');
   const [preparedBy, setPreparedBy] = useState('');
   const [notedBy, setNotedBy] = useState('');
-  const [reportType, setReportType] = useState('pdf');
+  const [reportType] = useState('pdf');
   const [reportFileName, setReportFileName] = useState('bmi_report');
 
   // BMI History state
@@ -56,7 +57,9 @@ export default function BMIMonitor(){
   const [selectedPersonnelId, setSelectedPersonnelId] = useState('');
 
   // View mode: 'latest' or 'history'
-  const [viewMode, setViewMode] = useState('latest');
+  // viewMode reserved for future view toggles
+
+  const { bump } = useContext(RefreshContext);
 
   useEffect(()=>{ load(); loadPersonnelList(); },[])
   
@@ -69,7 +72,7 @@ export default function BMIMonitor(){
   }
 
   function openNew(){
-    setForm({rank:'', name:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: ''});
+    setForm({rank:'', last_name:'', first_name:'', mi:'', suffix:'', qi:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
     setFront(null); setLeft(null); setRight(null);
     setShowModal(true);
   }
@@ -100,13 +103,26 @@ export default function BMIMonitor(){
   }
 
   function valid(){
-    return form.rank && form.name && form.unit && form.age && form.height_cm && form.weight_kg && front && left && right;
+    return form.rank && form.first_name && form.last_name && form.unit && form.age && form.height_cm && form.weight_kg && front && left && right;
   }
 
   async function submit(){
     if(!valid()) return alert('Please fill required fields and upload three photos');
     const data = new FormData();
-    Object.keys(form).forEach(k=>{ if(form[k]) data.append(k, form[k]); });
+    // compose full name from parts (first, mi, last, suffix)
+    const fullName = `${form.first_name || ''} ${form.mi || ''} ${form.last_name || ''} ${form.suffix || ''}`.replace(/\s+/g,' ').trim();
+    // append the composed name for backend compatibility, plus individual parts
+    data.append('name', fullName);
+    if (form.first_name) data.append('first_name', form.first_name);
+    if (form.last_name) data.append('last_name', form.last_name);
+    if (form.mi) data.append('mi', form.mi);
+    if (form.suffix) data.append('suffix', form.suffix);
+    if (form.qi) data.append('qi', form.qi);
+    // append remaining form fields
+    Object.keys(form).forEach(k=>{ if(['first_name','last_name','mi','suffix','qi'].includes(k)) return; if(form[k]) data.append(k, form[k]); });
+    // append status fields explicitly
+    if (form.status) data.append('status', form.status);
+    if (form.status_custom) data.append('status_custom', form.status_custom);
     data.append('photo_front', front);
     data.append('photo_left', left);
     data.append('photo_right', right);
@@ -115,17 +131,60 @@ export default function BMIMonitor(){
       setShowModal(false);
       load();
       loadPersonnelList();
+      try{ if (bump) bump(); }catch(e){}
     }catch(err){
-      alert('Error saving BMI record: '+ (err.response?.data?.detail || err.message));
+      const detail = err.response?.data?.detail || err.message;
+      // If duplicate-month error, offer to open existing record for editing
+      if (err.response && err.response.status === 400 && typeof detail === 'string' && detail.includes('A BMI record already exists')){
+        if (window.confirm(detail + '\n\nOpen existing record for editing instead?')){
+          // try to find personnel by name in personnelList
+          const target = `${(form.first_name||'').trim()} ${(form.mi||'').trim()} ${(form.last_name||'').trim()}`.replace(/\s+/g,' ').trim().toLowerCase();
+          let found = (personnelList || []).find(p => ((p.name||'').toLowerCase().replace(/\s+/g,' ').includes(target)));
+          if (!found) {
+            // fallback: match by first and last
+            found = (personnelList || []).find(p => {
+              const n = (p.name||'').toLowerCase();
+              return n.includes((form.first_name||'').toLowerCase()) && n.includes((form.last_name||'').toLowerCase());
+            });
+          }
+          try{
+            if (found && found.id){
+              const res = await api.get(`/api/bmi/latest/${found.id}`);
+              if (res && res.data) {
+                openUpdate(res.data);
+                return;
+              }
+            }
+            // fallback: try history by name
+            const byName = await api.get(`/api/bmi/history/by-name/${encodeURIComponent((form.last_name||'').trim() + ' ' + (form.first_name||'').trim())}`).catch(()=>null);
+            if (byName && byName.data && byName.data.history && byName.data.history.length>0){
+              openUpdate(byName.data.history[0]);
+              return;
+            }
+          }catch(e){
+            // ignore and show message below
+          }
+        }
+      }
+      alert('Error saving BMI record: ' + (detail));
     }
   }
 
   // Update functions
   function openUpdate(record) {
     setUpdateRecordId(record.id);
+    // parse name into first/mi/last
+    const parts = (record.name || '').trim().split(/\s+/).filter(Boolean);
+    const first = parts[0] || '';
+    const last = parts.length > 1 ? parts[parts.length - 1] : '';
+    const mi = parts.length > 2 ? parts.slice(1, parts.length - 1).join(' ') : '';
     setUpdateForm({
       rank: record.rank || '',
-      name: record.name || '',
+      first_name: first,
+      last_name: last,
+      mi: mi,
+      suffix: '',
+      qi: '',
       unit: record.unit || 'RHQ',
       age: record.age || '',
       sex: record.sex || 'Male',
@@ -142,6 +201,7 @@ export default function BMIMonitor(){
       left: record.photo_left,
       right: record.photo_right
     });
+    setUpdateForm(prev => ({ ...prev, status: record.status || 'Active', status_custom: record.status_custom || '' }));
     // Clear file inputs (new photos optional)
     setUpdateFront(null);
     setUpdateLeft(null);
@@ -150,17 +210,28 @@ export default function BMIMonitor(){
   }
 
   function updateValid() {
-    return updateForm.rank && updateForm.name && updateForm.unit && 
+    return updateForm.rank && updateForm.first_name && updateForm.last_name && updateForm.unit && 
            updateForm.age && updateForm.height_cm && updateForm.weight_kg;
   }
 
   async function submitUpdate() {
-    if(!updateValid()) return alert('Please fill all required fields (rank, name, unit, age, height, weight)');
+    if(!updateValid()) return alert('Please fill all required fields (rank, first name, last name, unit, age, height, weight)');
     
     const data = new FormData();
+    // compose full name
+    const fullName = `${updateForm.first_name || ''} ${updateForm.mi || ''} ${updateForm.last_name || ''} ${updateForm.suffix || ''}`.replace(/\s+/g,' ').trim();
+    data.append('name', fullName);
+    if (updateForm.first_name) data.append('first_name', updateForm.first_name);
+    if (updateForm.last_name) data.append('last_name', updateForm.last_name);
+    if (updateForm.mi) data.append('mi', updateForm.mi);
+    if (updateForm.suffix) data.append('suffix', updateForm.suffix);
+    if (updateForm.qi) data.append('qi', updateForm.qi);
     Object.keys(updateForm).forEach(k => { 
+      if(['first_name','last_name','mi','suffix','qi'].includes(k)) return; 
       if(updateForm[k]) data.append(k, updateForm[k]); 
     });
+    if (updateForm.status) data.append('status', updateForm.status);
+    if (updateForm.status_custom) data.append('status_custom', updateForm.status_custom);
     
     // Only append photos if new ones are selected
     if (updateFront) data.append('photo_front', updateFront);
@@ -175,6 +246,7 @@ export default function BMIMonitor(){
       load();
       loadPersonnelList();
       alert('BMI record updated successfully! Previous record preserved in history.');
+      try{ if (bump) bump(); }catch(e){}
     } catch(err) {
       alert('Error updating BMI record: ' + (err.response?.data?.detail || err.message));
     }
@@ -355,12 +427,7 @@ export default function BMIMonitor(){
               onChange={e => setUnitFilter(e.target.value)}
             >
               <option>All Units</option>
-              <option>RHQ</option>
-              <option>Cavite</option>
-              <option>Laguna</option>
-              <option>Batangas</option>
-              <option>Rizal</option>
-              <option>Quezon</option>
+              {UNITS.map(u => <option key={u}>{u}</option>)}
             </select>
             <select
               className="form-select form-select-sm"
@@ -423,6 +490,7 @@ export default function BMIMonitor(){
                   <th>BMI</th>
                   <th>Result</th>
                   <th>Classification</th>
+                  <th>Status</th>
                   <th>Date Taken</th>
                   <th>Actions</th>
                 </tr>
@@ -452,6 +520,7 @@ export default function BMIMonitor(){
                         {r.classification}
                       </span>
                     </td>
+                    <td>{r.status || (r.status_custom ? r.status_custom : 'Active')}</td>
                     <td>{r.date_taken ? new Date(r.date_taken).toLocaleDateString(): ''}</td>
                     <td>
                       <div className="btn-group btn-group-sm">
@@ -481,11 +550,11 @@ export default function BMIMonitor(){
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">Add New BMI Record</h5>
-                <button className="btn-close" onClick={()=>setShowModal(false)}></button>
+                <button className="btn-close" onClick={()=>{ if(window.confirm('Are you sure you want to cancel adding a new record?')) setShowModal(false); }}></button>
               </div>
               <div className="modal-body">
                 <div className="row g-2">
-                  <div className="col-md-4">
+                  <div className="col-md-3">
                     <label>Rank *</label>
                     <select
                       className="form-select"
@@ -498,8 +567,12 @@ export default function BMIMonitor(){
                       ))}
                     </select>
                   </div>
-                  <div className="col-md-4"><label>Name *</label><input className="form-control" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></div>
-                  <div className="col-md-4"><label>Unit *</label><select className="form-select" value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})}><option>RHQ</option><option>Cavite</option><option>Laguna</option><option>Batangas</option><option>Rizal</option><option>Quezon</option></select></div>
+                  <div className="col-md-3"><label>Last Name *</label><input className="form-control" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})} /></div>
+                  <div className="col-md-3"><label>First Name *</label><input className="form-control" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})} /></div>
+                  <div className="col-md-3"><label>Unit *</label><select className="form-select" value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})}><option>RHQ</option><option>Cavite</option><option>Laguna</option><option>Batangas</option><option>Rizal</option><option>Quezon</option></select></div>
+                  <div className="col-md-3"><label>M.I.</label><input className="form-control" value={form.mi} onChange={e=>setForm({...form,mi:e.target.value})} /></div>
+                  <div className="col-md-3"><label>Suffix</label><input className="form-control" value={form.suffix} onChange={e=>setForm({...form,suffix:e.target.value})} /></div>
+                  <div className="col-md-3"><label>QI</label><input className="form-control" value={form.qi} onChange={e=>setForm({...form,qi:e.target.value})} /></div>
                   <div className="col-md-3"><label>Age *</label><input type="number" className="form-control" value={form.age} onChange={e=>setForm({...form,age:e.target.value})} /></div>
                   <div className="col-md-3"><label>Sex</label><select className="form-select" value={form.sex} onChange={e=>setForm({...form,sex:e.target.value})}><option>Male</option><option>Female</option></select></div>
                   <div className="col-md-3"><label>Height (cm) *</label><input type="number" className="form-control" value={form.height_cm} onChange={e=>setForm({...form,height_cm:e.target.value})} /></div>
@@ -508,6 +581,22 @@ export default function BMIMonitor(){
                   <div className="col-md-3"><label>Hip (cm)</label><input type="number" className="form-control" value={form.hip_cm} onChange={e=>setForm({...form,hip_cm:e.target.value})} /></div>
                   <div className="col-md-3"><label>Wrist (cm)</label><input type="number" className="form-control" value={form.wrist_cm} onChange={e=>setForm({...form,wrist_cm:e.target.value})} /></div>
                   <div className="col-md-3"><label>Date Taken</label><input type="date" className="form-control" value={form.date_taken} onChange={e=>setForm({...form,date_taken:e.target.value})} /></div>
+                  <div className="col-md-3">
+                    <label>Status</label>
+                    <select className="form-select" value={form.status} onChange={e=>setForm({...form, status: e.target.value})}>
+                      <option>Active</option>
+                      <option>Inactive</option>
+                      <option>Reassign</option>
+                      <option>Retired</option>
+                      <option>Others</option>
+                    </select>
+                  </div>
+                  {form.status === 'Others' && (
+                    <div className="col-md-6">
+                      <label>Specify Status</label>
+                      <input className="form-control" value={form.status_custom} onChange={e=>setForm({...form, status_custom: e.target.value})} />
+                    </div>
+                  )}
 
                   <div className="col-12 mt-3"><label className="fw-bold">Photos (required)</label></div>
                   <div className="col-md-4"><label>Front View *</label><input type="file" accept="image/*" className="form-control" onChange={e=>setFront(e.target.files[0])} /></div>
@@ -516,7 +605,7 @@ export default function BMIMonitor(){
                 </div>
               </div>
               <div className="modal-footer">
-                <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>Cancel</button>
+                <button className="btn btn-secondary" onClick={()=>{ if(window.confirm('Are you sure you want to cancel adding a new record?')) setShowModal(false); }}>Cancel</button>
                 <button className="btn btn-primary" onClick={submit} disabled={!valid()}>Save Record</button>
               </div>
             </div>
@@ -534,7 +623,7 @@ export default function BMIMonitor(){
                   <i className="bi bi-pencil-square me-2"></i>
                   Update BMI Record
                 </h5>
-                <button className="btn-close" onClick={()=>setShowUpdateModal(false)}></button>
+                <button className="btn-close" onClick={()=>{ if(window.confirm('Discard changes to this update?')) setShowUpdateModal(false); }}></button>
               </div>
               <div className="modal-body">
                 <div className="alert alert-info mb-3">
@@ -555,11 +644,23 @@ export default function BMIMonitor(){
                       ))}
                     </select>
                   </div>
-                  <div className="col-md-4">
-                    <label>Name *</label>
-                    <input className="form-control" value={updateForm.name} onChange={e=>setUpdateForm({...updateForm,name:e.target.value})} />
+                  <div className="col-md-3">
+                    <label>Last Name *</label>
+                    <input className="form-control" value={updateForm.last_name} onChange={e=>setUpdateForm({...updateForm,last_name:e.target.value})} />
                   </div>
-                  <div className="col-md-4">
+                  <div className="col-md-3">
+                    <label>First Name *</label>
+                    <input className="form-control" value={updateForm.first_name} onChange={e=>setUpdateForm({...updateForm,first_name:e.target.value})} />
+                  </div>
+                  <div className="col-md-2">
+                    <label>M.I.</label>
+                    <input className="form-control" value={updateForm.mi} onChange={e=>setUpdateForm({...updateForm,mi:e.target.value})} />
+                  </div>
+                  <div className="col-md-2">
+                    <label>Suffix</label>
+                    <input className="form-control" value={updateForm.suffix} onChange={e=>setUpdateForm({...updateForm,suffix:e.target.value})} />
+                  </div>
+                  <div className="col-md-2">
                     <label>Unit *</label>
                     <select className="form-select" value={updateForm.unit} onChange={e=>setUpdateForm({...updateForm,unit:e.target.value})}>
                       <option>RHQ</option>
@@ -605,6 +706,22 @@ export default function BMIMonitor(){
                     <label>Date Taken</label>
                     <input type="date" className="form-control" value={updateForm.date_taken} onChange={e=>setUpdateForm({...updateForm,date_taken:e.target.value})} />
                   </div>
+                  <div className="col-md-3">
+                    <label>Status</label>
+                    <select className="form-select" value={updateForm.status} onChange={e=>setUpdateForm({...updateForm, status: e.target.value})}>
+                      <option>Active</option>
+                      <option>Inactive</option>
+                      <option>Reassign</option>
+                      <option>Retired</option>
+                      <option>Others</option>
+                    </select>
+                  </div>
+                  {updateForm.status === 'Others' && (
+                    <div className="col-md-6">
+                      <label>Specify Status</label>
+                      <input className="form-control" value={updateForm.status_custom} onChange={e=>setUpdateForm({...updateForm, status_custom: e.target.value})} />
+                    </div>
+                  )}
 
                   <div className="col-12 mt-3">
                     <label className="fw-bold">Photos (optional - leave empty to keep existing)</label>
@@ -639,7 +756,7 @@ export default function BMIMonitor(){
                 </div>
               </div>
               <div className="modal-footer">
-                <button className="btn btn-secondary" onClick={()=>setShowUpdateModal(false)}>Cancel</button>
+                <button className="btn btn-secondary" onClick={()=>{ if(window.confirm('Discard changes to this update?')) setShowUpdateModal(false); }}>Cancel</button>
                 <button className="btn btn-warning" onClick={submitUpdate} disabled={!updateValid()}>
                   <i className="bi bi-save me-1"></i>
                   Update BMI Record
@@ -653,50 +770,65 @@ export default function BMIMonitor(){
       {/* Report Modal */}
       {showReportModal && (
         <div className="modal d-block" tabIndex={-1}>
-          <div className="modal-dialog modal-sm">
+          <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">Generate BMI Report</h5>
                 <button className="btn-close" onClick={()=>setShowReportModal(false)}></button>
               </div>
               <div className="modal-body">
-                <div className="mb-2">
-                  <label>Month</label>
-                  <select className="form-select" value={reportMonth} onChange={e=>setReportMonth(e.target.value)}>
-                    <option value="">All Months</option>
-                    {monthOptions.slice(1).map((m,i)=> <option key={m} value={i+1}>{m}</option>)}
-                  </select>
-                </div>
-                <div className="mb-2">
-                  <label>Year</label>
-                  <select className="form-select" value={reportYear} onChange={e=>setReportYear(e.target.value)}>
-                    <option value="">All Years</option>
-                    {[...new Set(records.filter(r=>r.date_taken).map(r=> new Date(r.date_taken).getFullYear()))].sort().map(y=> <option key={y} value={y}>{y}</option>)}
-                  </select>
-                </div>
-                <div className="mb-2">
-                  <label>Prepared By</label>
-                  <input className="form-control" value={preparedBy} onChange={e=>setPreparedBy(e.target.value)} />
-                </div>
-                <div className="mb-2">
-                  <label>Noted By</label>
-                  <input className="form-control" value={notedBy} onChange={e=>setNotedBy(e.target.value)} />
-                </div>
-                <div className="mb-2">
-                  <label>Report Type</label>
-                  <select className="form-select" value={reportType} onChange={e=>setReportType(e.target.value)}>
-                    <option value="pdf">PDF</option>
-                    <option value="excel">Excel</option>
-                  </select>
-                </div>
-                <div className="mb-2">
-                  <label>File Name *</label>
-                  <input
-                    className="form-control"
-                    value={reportFileName}
-                    onChange={e=>setReportFileName(e.target.value)}
-                    placeholder="e.g. bmi_report_march_2026"
-                  />
+                <div className="row">
+                  <div className="col-md-6">
+                    <div className="mb-2">
+                      <label>File Name *</label>
+                      <input className="form-control" value={reportFileName} onChange={e=>setReportFileName(e.target.value)} placeholder="Filename (no extension)" />
+                      <div className="small text-muted mt-1">Filename will be used for the downloaded report.</div>
+                    </div>
+
+                    <div className="mb-2">
+                      <label>Month</label>
+                      <select className="form-select" value={reportMonth} onChange={e=>setReportMonth(e.target.value)}>
+                        <option value="">All Months</option>
+                        {monthOptions.slice(1).map((m,i)=> <option key={m} value={i+1}>{m}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="mb-2">
+                      <label>Year</label>
+                      <select className="form-select" value={reportYear} onChange={e=>setReportYear(e.target.value)}>
+                        <option value="">All Years</option>
+                        {[...new Set(records.filter(r=>r.date_taken).map(r=> new Date(r.date_taken).getFullYear()))].sort().map(y=> <option key={y} value={y}>{y}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="mb-2">
+                      <label>Unit (Report Scope)</label>
+                      <select className="form-select" value={unitFilter} onChange={e=>setUnitFilter(e.target.value)}>
+                        <option>All Units</option>
+                        {UNITS.map(u => <option key={u}>{u}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="col-md-6">
+                    <div className="mb-2">
+                      <label>Prepared By</label>
+                      <input className="form-control mb-1" placeholder="Name" value={preparedBy} onChange={e=>setPreparedBy(e.target.value)} />
+                      <input className="form-control" placeholder="Title (optional)" />
+                    </div>
+
+                    <div className="mb-2">
+                      <label>Verified Correct By</label>
+                      <input className="form-control mb-1" placeholder="Name" value={''} onChange={()=>{}} />
+                      <input className="form-control" placeholder="Title (optional)" />
+                    </div>
+
+                    <div className="mb-2">
+                      <label>Noted By</label>
+                      <input className="form-control mb-1" placeholder="Name" value={notedBy} onChange={e=>setNotedBy(e.target.value)} />
+                      <input className="form-control" placeholder="Title (optional)" />
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="modal-footer">

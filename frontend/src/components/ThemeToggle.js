@@ -4,8 +4,8 @@ import { ThemeContext } from '../contexts/ThemeContext';
 export default function ThemeToggle(){
   const { theme, toggle } = useContext(ThemeContext);
   return (
-    <div className="theme-toggle d-flex align-items-center gap-2">
-      <button className="btn btn-sm btn-outline-secondary" onClick={toggle} aria-label="Toggle theme">{theme === 'dark' ? 'Dark' : 'Light'}</button>
-    </div>
+    <button className="btn btn-sm btn-outline-secondary" onClick={toggle} aria-label="Toggle theme" title="Toggle theme">
+      {theme === 'dark' ? <i className="bi bi-sun-fill" /> : <i className="bi bi-moon-fill" />}
+    </button>
   );
 }

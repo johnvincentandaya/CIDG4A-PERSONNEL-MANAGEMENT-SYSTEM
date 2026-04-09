@@ -1,7 +1,10 @@
-# app package - export app from main at parent level
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from main import app
+"""
+App package initializer.
 
-__all__ = ["app"]
+Do not import `main` here to avoid circular imports when running
+`uvicorn main:app` from the `backend` directory. Keeping this module
+minimal ensures `app` package imports its submodules without pulling
+in the top-level `main` module.
+"""
+
+__all__ = []

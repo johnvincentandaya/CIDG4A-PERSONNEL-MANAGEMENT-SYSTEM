@@ -23,13 +23,17 @@ class TrainingCertificateSchema(BaseModel):
 
 class PersonnelCreate(BaseModel):
     rank: str
-    badge_number: str
+    badge_number: Optional[str] = None
     last_name: str
     first_name: str
     mi: Optional[str] = None
     suffix: Optional[str] = None
     unit: str
     status: str
+    status_custom: Optional[str] = None
+    # NUP-specific
+    nup_rank: Optional[str] = None
+    nup_entry_number: Optional[int] = None
 
     # Optional Form201 fields
     qlf: Optional[str] = None
@@ -38,8 +42,8 @@ class PersonnelCreate(BaseModel):
     date_of_designation: Optional[datetime] = None
     highest_eligibility: Optional[str] = None
     contact_number: Optional[str] = None
-    birthdate: Optional[datetime] = None
-    religion: Optional[str] = None
+    birthdate: datetime
+    religion: str
     section: Optional[str] = None
 
 class PersonnelSchema(BaseModel):
@@ -57,10 +61,13 @@ class PersonnelSchema(BaseModel):
     date_of_designation: Optional[datetime]
     highest_eligibility: Optional[str]
     contact_number: Optional[str]
-    birthdate: Optional[datetime]
-    religion: Optional[str]
+    birthdate: datetime
+    religion: str
     section: Optional[str]
     status: str
+    status_custom: Optional[str] = None
+    nup_rank: Optional[str] = None
+    nup_entry_number: Optional[int] = None
     date_added: datetime
     documents: List[DocumentSchema] = []
     trainings: List[TrainingCertificateSchema] = []
@@ -79,6 +86,8 @@ class BMICreate(BaseModel):
     hip_cm: Optional[float] = None
     wrist_cm: Optional[float] = None
     date_taken: Optional[datetime] = None
+    status: Optional[str] = 'Active'
+    status_custom: Optional[str] = None
 
 class BMISchema(BaseModel):
     id: int
@@ -100,6 +109,8 @@ class BMISchema(BaseModel):
     photo_front: Optional[str]
     photo_left: Optional[str]
     photo_right: Optional[str]
+    status: Optional[str]
+    status_custom: Optional[str]
     is_latest: Optional[bool] = True
     class Config:
         from_attributes = True

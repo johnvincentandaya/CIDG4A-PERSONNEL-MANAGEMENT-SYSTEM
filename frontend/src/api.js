@@ -6,8 +6,11 @@ import axios from 'axios';
 // - Or override with REACT_APP_API_BASE (e.g. "http://192.168.1.50:8000")
 let defaultBase = '';
 if (typeof window !== 'undefined') {
-  if (window.location.port === '3000') {
-    defaultBase = 'http://localhost:8000';
+  // In development, point to local backend. In production, use same-origin.
+  if (process.env.NODE_ENV === 'development') {
+    // Use port 8001 for a local backend during development to avoid conflicts
+    // Allow override with REACT_APP_API_BASE; default to 8001 if backend running there.
+    defaultBase = (process.env.REACT_APP_API_BASE && process.env.REACT_APP_API_BASE.replace(/\/$/, '')) || 'http://localhost:8001';
   } else {
     defaultBase = '';
   }

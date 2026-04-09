@@ -76,54 +76,55 @@ def migrate_db():
             conn.commit()
         except Exception:
             pass
-            # Ensure personnel table has required Form201 columns
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN badge_number VARCHAR'))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN qlf VARCHAR'))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN date_of_reassignment TIMESTAMP'))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN designation VARCHAR'))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN date_of_designation TIMESTAMP'))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN highest_eligibility VARCHAR'))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN contact_number VARCHAR'))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN birthdate TIMESTAMP'))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN religion VARCHAR'))
-                conn.commit()
-            except Exception:
-                pass
-            try:
-                conn.execute(text('ALTER TABLE personnel ADD COLUMN section VARCHAR'))
-                conn.commit()
-            except Exception:
-                pass
+
+        # Ensure personnel table has required Form201 columns
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN badge_number VARCHAR'))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN qlf VARCHAR'))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN date_of_reassignment TIMESTAMP'))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN designation VARCHAR'))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN date_of_designation TIMESTAMP'))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN highest_eligibility VARCHAR'))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN contact_number VARCHAR'))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN birthdate TIMESTAMP'))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN religion VARCHAR'))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text('ALTER TABLE personnel ADD COLUMN section VARCHAR'))
+            conn.commit()
+        except Exception:
+            pass

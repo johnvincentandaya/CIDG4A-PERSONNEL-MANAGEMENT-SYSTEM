@@ -11,6 +11,32 @@
   --cidg-shadow-soft: 0 10px 30px rgba(15, 23, 42, 0.06);
 }
 
+/* Dark theme overrides - variables that components rely on */
+:root[data-bs-theme='dark'], body.dark {
+  --cidg-bg: #0b1220;
+  --cidg-surface: #0f1720;
+  --cidg-border-subtle: #23313a;
+  --cidg-text-main: #e6eef6;
+  --cidg-text-muted: #9fb0c1;
+  /* Light text variables for dark mode (light glyphs on dark background) */
+  --cidg-text-light: #e6eef6;
+  --cidg-text-muted-light: #9fb0c1;
+  --cidg-blue: #6ea8fe;
+  --cidg-blue-soft: #4f86d6;
+  --cidg-blue-muted: #0f1720;
+  --cidg-shadow-soft: none;
+}
+
+body.dark {
+  background: var(--cidg-bg);
+  /* show light text (on dark background) for readability */
+  color: var(--cidg-text-light);
+}
+
+body.dark .app-main {
+  background: radial-gradient(circle at top left, #0f1720 0, #0b1220 40%, #071018 100%);
+}
+
 body {
   background: var(--cidg-bg);
   color: var(--cidg-text-main);
@@ -411,17 +437,17 @@ body {
 }
 
 .badge-bmi--normal {
-  background: #ecfdf3;
+  background: #00ff6a;
   color: #15803d;
 }
 
 .badge-bmi--overweight {
-  background: #fff7ed;
+  background: #fdbd6e;
   color: #c2410c;
 }
 
 .badge-bmi--obese {
-  background: #fef2f2;
+  background: #ff5b5b;
   color: #b91c1c;
 }
 
@@ -525,4 +551,74 @@ body {
 
 .metric-list-value {
   font-weight: 600;
+}
+
+/* Dark-mode explicit overrides for elements with hard-coded light colors */
+/* These ensure readable text and adequate contrast when body.dark or data-bs-theme='dark' is active */
+body.dark .stat-card,
+body.dark .card-elevated,
+body.dark .card-section,
+body.dark .table-wrapper,
+body.dark .mission-vision-grid > .card-section,
+body.dark .sidebar-logo-wrap,
+body.dark .btn-quiet,
+body.dark .btn-outline-secondary,
+body.dark .table-empty-state {
+  background: var(--cidg-surface) !important;
+  color: var(--cidg-text-light) !important;
+  border-color: var(--cidg-border-subtle) !important;
+  box-shadow: none !important;
+}
+
+body.dark .stat-card-label,
+body.dark .stat-card-meta,
+body.dark .page-eyebrow,
+body.dark .page-subtitle,
+body.dark .section-title,
+body.dark .metric-list-label,
+body.dark .table-empty-state,
+body.dark .data-table thead th {
+  color: var(--cidg-text-muted-light) !important;
+}
+
+body.dark .stat-card-value,
+body.dark .page-title,
+body.dark .metric-list-value,
+body.dark .data-table tbody td,
+body.dark .data-table tbody tr {
+  color: var(--cidg-text-light) !important;
+}
+
+body.dark .data-table thead {
+  background: transparent !important;
+}
+
+body.dark .data-table tbody tr:hover {
+  background-color: rgba(255,255,255,0.02) !important;
+}
+
+body.dark .mission-vision-toggle {
+  background: rgba(255,255,255,0.02) !important;
+}
+
+body.dark .mission-vision-pill,
+body.dark .mission-vision-pill.active {
+  color: var(--cidg-text-light) !important;
+  background: transparent !important;
+}
+
+/* Ensure badges remain legible in dark mode */
+body.dark .badge-status--active,
+body.dark .badge-bmi--normal,
+body.dark .badge-bmi--overweight,
+body.dark .badge-bmi--obese,
+body.dark .badge-bmi--underweight {
+  filter: brightness(0.95);
+  color: var(--cidg-text-light) !important;
+}
+
+/* Apply dark text across main application area for better readability per user request. */
+body.dark .app-main,
+body.dark .app-main * {
+  color: var(--cidg-text-light) !important;
 }

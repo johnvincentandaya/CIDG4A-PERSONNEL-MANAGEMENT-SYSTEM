@@ -9,3 +9,4 @@ pydantic
 reportlab
 openpyxl
 jinja2
+Pillow
