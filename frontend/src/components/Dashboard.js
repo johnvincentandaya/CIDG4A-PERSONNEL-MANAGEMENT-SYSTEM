@@ -7,7 +7,7 @@ const UNITS = ['RHQ', 'Cavite', 'Laguna', 'Batangas', 'Rizal', 'Quezon'];
 export default function Dashboard() {
   const [counts, setCounts] = useState({});
   const [bmiCounts, setBmiCounts] = useState({});
-  const [orgChartError, setOrgChartError] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const { version } = useContext(RefreshContext);
 
@@ -15,17 +15,28 @@ export default function Dashboard() {
     api
       .get('/api/personnel/counts')
       .then(r => setCounts(r.data))
-      .catch(() => {});
+      .catch((err) => {
+        console.error('Failed to load personnel counts', err);
+        setLoadError('Unable to load dashboard counts. Please refresh.');
+      });
     
     api
       .get('/api/bmi/counts')
       .then(r => setBmiCounts(r.data))
-      .catch(() => {});
+      .catch((err) => {
+        console.error('Failed to load BMI counts', err);
+        setLoadError('Unable to load dashboard counts. Please refresh.');
+      });
   }, [version]);
 
   const totalPersonnel = useMemo(
-    () => UNITS.reduce((sum, u) => sum + (counts[u] || 0), 0),
+    () => counts.total ?? UNITS.reduce((sum, u) => sum + (counts[u] || 0), 0),
     [counts]
+  );
+
+  const totalBMIInputs = useMemo(
+    () => bmiCounts.total ?? UNITS.reduce((sum, u) => sum + (bmiCounts[u]?.total || 0), 0),
+    [bmiCounts]
   );
 
   return (
@@ -47,21 +58,24 @@ export default function Dashboard() {
       </div>
 
       <div className="stat-grid">
+        {loadError && (
+          <div className="alert alert-warning mb-2" role="alert">{loadError}</div>
+        )}
         <div className="stat-card">
-          <div className="stat-card-label">Total Personnel</div>
+          <div className="stat-card-label">Form 201 Inputs</div>
           <div className="stat-card-value">{totalPersonnel}</div>
-          <div className="stat-card-meta">Across all RFU4A units</div>
+          <div className="stat-card-meta">Total Form 201 records encoded</div>
         </div>
         {/* Active Units card removed per spec */}
+        <div className="stat-card">
+          <div className="stat-card-label">BMI Inputs</div>
+          <div className="stat-card-value">{totalBMIInputs}</div>
+          <div className="stat-card-meta">Total BMI records encoded</div>
+        </div>
         <div className="stat-card">
           <div className="stat-card-label">BMI Records (Month)</div>
           <div className="stat-card-value">{bmiCounts.total_monthly || 0}</div>
           <div className="stat-card-meta">Monitoring coverage this month</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-label">Compliance Status</div>
-          <div className="stat-card-value">On Track</div>
-          <div className="stat-card-meta">Based on latest records</div>
         </div>
       </div>
 
@@ -109,29 +123,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="card-section p-3">
-            <div className="section-title">Organizational Structure</div>
-            <div className="text-muted small mb-3">
-              Visual representation of RFU4A organizational structure can be integrated here for quick reference.
-            </div>
-            <div className="text-center">
-              {!orgChartError ? (
-                <img
-                  src="/cidg-org-chart.png"
-                  alt="CIDG RFU4A Organizational Chart"
-                  className="img-fluid rounded"
-                  style={{ maxHeight: '500px', objectFit: 'contain' }}
-                  onError={() => setOrgChartError(true)}
-                />
-              ) : (
-                <div className="border rounded-3 p-3 text-muted small" style={{ borderStyle: 'dashed' }}>
-                  Organizational chart image not found. Add your file to
-                  <code className="ms-1">frontend/public/cidg-org-chart.png</code>
-                  and refresh the page.
-                </div>
-              )}
-            </div>
-          </div>  
         </div>
 
         <div className="col-12 col-lg-4">

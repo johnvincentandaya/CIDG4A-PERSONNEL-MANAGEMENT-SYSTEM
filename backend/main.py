@@ -10,6 +10,20 @@ from sqlalchemy import create_engine, text
 from app.database import migrate_db
 
 
+def _is_expected_migration_error(err: Exception) -> bool:
+    message = str(err).lower()
+    return (
+        'duplicate column name' in message
+        or 'already exists' in message
+        or 'no such table' in message
+    )
+
+
+def _handle_migration_error(err: Exception, step: str):
+    if not _is_expected_migration_error(err):
+        print(f"Migration warning ({step}): {err}")
+
+
 def run_migrations():
     """Add missing columns to existing tables for migration."""
     BASE_DIR = Path(__file__).resolve().parent.parent
@@ -29,7 +43,7 @@ def run_migrations():
             conn.commit()
             print("Migration: Added created_at column to bmi_records")
         except Exception as e:
-            pass  # Column might already exist
+            _handle_migration_error(e, "add bmi_records.created_at")
         
         try:
             conn.execute(text("""
@@ -38,7 +52,7 @@ def run_migrations():
             conn.commit()
             print("Migration: Added updated_at column to bmi_records")
         except Exception as e:
-            pass  # Column might already exist
+            _handle_migration_error(e, "add bmi_records.updated_at")
         
         try:
             conn.execute(text("""
@@ -47,7 +61,7 @@ def run_migrations():
             conn.commit()
             print("Migration: Added personnel_id column to bmi_records")
         except Exception as e:
-            pass  # Column might already exist
+            _handle_migration_error(e, "add bmi_records.personnel_id")
         
         # Ensure indexes exist for performance
         try:
@@ -55,23 +69,23 @@ def run_migrations():
                 CREATE INDEX IF NOT EXISTS idx_bmi_personnel_id ON bmi_records(personnel_id)
             """))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "create idx_bmi_personnel_id")
         
         try:
             conn.execute(text("""
                 CREATE INDEX IF NOT EXISTS idx_bmi_date_taken ON bmi_records(date_taken)
             """))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "create idx_bmi_date_taken")
     
     engine.dispose()
     try:
         # apply higher-level migrations for new personnel columns
         migrate_db()
-    except Exception:
-        pass
+    except Exception as e:
+        _handle_migration_error(e, "run app.database.migrate_db")
 
 
 @asynccontextmanager

@@ -17,14 +17,14 @@ function classificationClass(name){
 export default function BMIMonitor(){
   const [records, setRecords] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({rank:'', last_name:'', first_name:'', mi:'', suffix:'', qi:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
+  const [form, setForm] = useState({rank:'', last_name:'', first_name:'', suffix:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
   const [front, setFront] = useState(null);
   const [left, setLeft] = useState(null);
   const [right, setRight] = useState(null);
 
   // Update modal state
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [updateForm, setUpdateForm] = useState({rank:'', last_name:'', first_name:'', mi:'', suffix:'', qi:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
+  const [updateForm, setUpdateForm] = useState({rank:'', last_name:'', first_name:'', suffix:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
   const [updateFront, setUpdateFront] = useState(null);
   const [updateLeft, setUpdateLeft] = useState(null);
   const [updateRight, setUpdateRight] = useState(null);
@@ -50,6 +50,7 @@ export default function BMIMonitor(){
   const [historyRecords, setHistoryRecords] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [selectedDate, setSelectedDate] = useState('');
   const [dateRecord, setDateRecord] = useState(null);
   const [dateLoading, setDateLoading] = useState(false);
@@ -64,41 +65,42 @@ export default function BMIMonitor(){
   useEffect(()=>{ load(); loadPersonnelList(); },[])
   
   function load(){
-    api.get('/api/bmi/', { params: { latest_only: true } }).then(r=>setRecords(r.data)).catch(()=>{});
+    api.get('/api/bmi/', { params: { latest_only: true } })
+      .then(r=>{
+        setRecords(r.data);
+        setLoadError('');
+      })
+      .catch((err)=>{
+        console.error('Failed to load BMI records', err);
+        setLoadError('Unable to load BMI records. Please refresh.');
+      });
   }
 
   function loadPersonnelList(){
-    api.get('/api/bmi/distinct-personnel').then(r=>setPersonnelList(r.data)).catch(()=>{});
+    api.get('/api/bmi/distinct-personnel')
+      .then(r=>setPersonnelList(r.data))
+      .catch((err)=>{
+        console.error('Failed to load distinct personnel list', err);
+      });
   }
 
   function openNew(){
-    setForm({rank:'', last_name:'', first_name:'', mi:'', suffix:'', qi:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
+    setForm({rank:'', last_name:'', first_name:'', suffix:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
     setFront(null); setLeft(null); setRight(null);
     setShowModal(true);
   }
 
-  async function downloadSingleResult(record){
-    const suggested = `BMI_RESULT_${(record?.name || 'personnel').replace(/\s+/g, '_')}`;
-    const fileName = window.prompt('Enter file name for BMI result PDF', suggested);
-    if (!fileName || !fileName.trim()) {
-      alert('File name is required before generating the BMI result PDF.');
-      return;
-    }
-
+  async function viewSingleResult(record){
+    const safeBaseName = `BMI_RESULT_${(record?.name || 'personnel').replace(/\s+/g, '_')}`;
     try {
       const res = await api.get(`/api/bmi/${record.id}/pdf`, {
-        params: { file_name: fileName.trim() },
+        params: { file_name: safeBaseName },
         responseType: 'blob',
       });
       const url = window.URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${fileName.trim()}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      window.open(url, '_blank', 'noopener,noreferrer');
     } catch (err) {
-      alert('Error generating BMI result PDF.');
+      alert('Error viewing BMI result PDF.');
     }
   }
 
@@ -109,17 +111,15 @@ export default function BMIMonitor(){
   async function submit(){
     if(!valid()) return alert('Please fill required fields and upload three photos');
     const data = new FormData();
-    // compose full name from parts (first, mi, last, suffix)
-    const fullName = `${form.first_name || ''} ${form.mi || ''} ${form.last_name || ''} ${form.suffix || ''}`.replace(/\s+/g,' ').trim();
+    // compose full name from parts (first, last, suffix)
+    const fullName = `${form.first_name || ''} ${form.last_name || ''} ${form.suffix || ''}`.replace(/\s+/g,' ').trim();
     // append the composed name for backend compatibility, plus individual parts
     data.append('name', fullName);
     if (form.first_name) data.append('first_name', form.first_name);
     if (form.last_name) data.append('last_name', form.last_name);
-    if (form.mi) data.append('mi', form.mi);
     if (form.suffix) data.append('suffix', form.suffix);
-    if (form.qi) data.append('qi', form.qi);
     // append remaining form fields
-    Object.keys(form).forEach(k=>{ if(['first_name','last_name','mi','suffix','qi'].includes(k)) return; if(form[k]) data.append(k, form[k]); });
+    Object.keys(form).forEach(k=>{ if(['first_name','last_name','suffix'].includes(k)) return; if(form[k]) data.append(k, form[k]); });
     // append status fields explicitly
     if (form.status) data.append('status', form.status);
     if (form.status_custom) data.append('status_custom', form.status_custom);
@@ -138,7 +138,7 @@ export default function BMIMonitor(){
       if (err.response && err.response.status === 400 && typeof detail === 'string' && detail.includes('A BMI record already exists')){
         if (window.confirm(detail + '\n\nOpen existing record for editing instead?')){
           // try to find personnel by name in personnelList
-          const target = `${(form.first_name||'').trim()} ${(form.mi||'').trim()} ${(form.last_name||'').trim()}`.replace(/\s+/g,' ').trim().toLowerCase();
+          const target = `${(form.first_name||'').trim()} ${(form.last_name||'').trim()}`.replace(/\s+/g,' ').trim().toLowerCase();
           let found = (personnelList || []).find(p => ((p.name||'').toLowerCase().replace(/\s+/g,' ').includes(target)));
           if (!found) {
             // fallback: match by first and last
@@ -182,9 +182,7 @@ export default function BMIMonitor(){
       rank: record.rank || '',
       first_name: first,
       last_name: last,
-      mi: mi,
       suffix: '',
-      qi: '',
       unit: record.unit || 'RHQ',
       age: record.age || '',
       sex: record.sex || 'Male',
@@ -219,15 +217,13 @@ export default function BMIMonitor(){
     
     const data = new FormData();
     // compose full name
-    const fullName = `${updateForm.first_name || ''} ${updateForm.mi || ''} ${updateForm.last_name || ''} ${updateForm.suffix || ''}`.replace(/\s+/g,' ').trim();
+    const fullName = `${updateForm.first_name || ''} ${updateForm.last_name || ''} ${updateForm.suffix || ''}`.replace(/\s+/g,' ').trim();
     data.append('name', fullName);
     if (updateForm.first_name) data.append('first_name', updateForm.first_name);
     if (updateForm.last_name) data.append('last_name', updateForm.last_name);
-    if (updateForm.mi) data.append('mi', updateForm.mi);
     if (updateForm.suffix) data.append('suffix', updateForm.suffix);
-    if (updateForm.qi) data.append('qi', updateForm.qi);
     Object.keys(updateForm).forEach(k => { 
-      if(['first_name','last_name','mi','suffix','qi'].includes(k)) return; 
+      if(['first_name','last_name','suffix'].includes(k)) return; 
       if(updateForm[k]) data.append(k, updateForm[k]); 
     });
     if (updateForm.status) data.append('status', updateForm.status);
@@ -249,6 +245,20 @@ export default function BMIMonitor(){
       try{ if (bump) bump(); }catch(e){}
     } catch(err) {
       alert('Error updating BMI record: ' + (err.response?.data?.detail || err.message));
+    }
+  }
+
+  async function deleteBMIRecord(record) {
+    const ok = window.confirm(`Delete BMI record for ${record?.name || 'this personnel'} dated ${formatDate(record?.date_taken)}? This action cannot be undone.`);
+    if (!ok) return;
+
+    try {
+      await api.delete(`/api/bmi/${record.id}`);
+      load();
+      loadPersonnelList();
+      try{ if (bump) bump(); }catch(e){}
+    } catch (err) {
+      alert('Error deleting BMI record: ' + (err.response?.data?.detail || err.message));
     }
   }
 
@@ -418,6 +428,10 @@ export default function BMIMonitor(){
         </div>
       </div>
 
+      {loadError && (
+        <div className="alert alert-warning" role="alert">{loadError}</div>
+      )}
+
       <div className="card-section p-3">
         <div className="filter-bar">
           <div className="filter-controls">
@@ -530,8 +544,11 @@ export default function BMIMonitor(){
                         <button className="btn btn-outline-warning" onClick={() => openUpdate(r)} title="Update BMI Record">
                           <i className="bi bi-pencil" />
                         </button>
-                        <button className="btn btn-outline-primary" onClick={()=>downloadSingleResult(r)} title="Generate BMI Result PDF">
-                          <i className="bi bi-file-earmark-pdf" />
+                        <button className="btn btn-outline-primary" onClick={()=>viewSingleResult(r)} title="View BMI Result PDF">
+                          <i className="bi bi-eye" />
+                        </button>
+                        <button className="btn btn-outline-danger" onClick={() => deleteBMIRecord(r)} title="Delete BMI Record">
+                          <i className="bi bi-trash" />
                         </button>
                       </div>
                     </td>
@@ -570,9 +587,7 @@ export default function BMIMonitor(){
                   <div className="col-md-3"><label>Last Name *</label><input className="form-control" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})} /></div>
                   <div className="col-md-3"><label>First Name *</label><input className="form-control" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})} /></div>
                   <div className="col-md-3"><label>Unit *</label><select className="form-select" value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})}><option>RHQ</option><option>Cavite</option><option>Laguna</option><option>Batangas</option><option>Rizal</option><option>Quezon</option></select></div>
-                  <div className="col-md-3"><label>M.I.</label><input className="form-control" value={form.mi} onChange={e=>setForm({...form,mi:e.target.value})} /></div>
                   <div className="col-md-3"><label>Suffix</label><input className="form-control" value={form.suffix} onChange={e=>setForm({...form,suffix:e.target.value})} /></div>
-                  <div className="col-md-3"><label>QI</label><input className="form-control" value={form.qi} onChange={e=>setForm({...form,qi:e.target.value})} /></div>
                   <div className="col-md-3"><label>Age *</label><input type="number" className="form-control" value={form.age} onChange={e=>setForm({...form,age:e.target.value})} /></div>
                   <div className="col-md-3"><label>Sex</label><select className="form-select" value={form.sex} onChange={e=>setForm({...form,sex:e.target.value})}><option>Male</option><option>Female</option></select></div>
                   <div className="col-md-3"><label>Height (cm) *</label><input type="number" className="form-control" value={form.height_cm} onChange={e=>setForm({...form,height_cm:e.target.value})} /></div>
@@ -651,10 +666,6 @@ export default function BMIMonitor(){
                   <div className="col-md-3">
                     <label>First Name *</label>
                     <input className="form-control" value={updateForm.first_name} onChange={e=>setUpdateForm({...updateForm,first_name:e.target.value})} />
-                  </div>
-                  <div className="col-md-2">
-                    <label>M.I.</label>
-                    <input className="form-control" value={updateForm.mi} onChange={e=>setUpdateForm({...updateForm,mi:e.target.value})} />
                   </div>
                   <div className="col-md-2">
                     <label>Suffix</label>
@@ -1008,10 +1019,10 @@ export default function BMIMonitor(){
                       <div className="mt-3">
                         <button 
                           className="btn btn-sm btn-outline-primary"
-                          onClick={() => downloadSingleResult(dateRecord)}
+                          onClick={() => viewSingleResult(dateRecord)}
                         >
-                          <i className="bi bi-file-earmark-pdf me-1"></i>
-                          Download PDF
+                          <i className="bi bi-eye me-1"></i>
+                          View PDF
                         </button>
                       </div>
                     </div>
@@ -1068,10 +1079,10 @@ export default function BMIMonitor(){
                               <td>
                                 <button 
                                   className="btn btn-sm btn-outline-primary"
-                                  onClick={() => downloadSingleResult(rec)}
-                                  title="Download PDF"
+                                  onClick={() => viewSingleResult(rec)}
+                                  title="View PDF"
                                 >
-                                  <i className="bi bi-file-earmark-pdf"></i>
+                                  <i className="bi bi-eye"></i>
                                 </button>
                               </td>
                             </tr>

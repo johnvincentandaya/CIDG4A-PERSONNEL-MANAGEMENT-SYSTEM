@@ -1243,23 +1243,30 @@ def bmi_counts(db: Session = Depends(get_db)):
     current_month = now.month
     current_year = now.year
     
-    units = ['RHQ', 'Cavite', 'Laguna', 'Batangas', 'Rizal', 'Quezon']
+    unit_map = {
+        'RHQ': 'RHQ',
+        'Cavite': 'CAVITE',
+        'Laguna': 'LAGUNA',
+        'Batangas': 'BATANGAS',
+        'Rizal': 'RIZAL',
+        'Quezon': 'QUEZON',
+    }
     result = {}
     
-    for unit in units:
+    for display_name, db_unit in unit_map.items():
         # Count records for this unit in current month
         monthly_count = db.query(models.BMIRecord).filter(
-            models.BMIRecord.unit == unit,
+            func.upper(models.BMIRecord.unit) == db_unit,
             extract('month', models.BMIRecord.date_taken) == current_month,
             extract('year', models.BMIRecord.date_taken) == current_year
         ).count()
         
         # Count total records for this unit
         total_count = db.query(models.BMIRecord).filter(
-            models.BMIRecord.unit == unit
+            func.upper(models.BMIRecord.unit) == db_unit
         ).count()
         
-        result[unit] = {
+        result[display_name] = {
             'monthly': monthly_count,
             'total': total_count
         }
@@ -1271,6 +1278,7 @@ def bmi_counts(db: Session = Depends(get_db)):
     ).count()
     
     result['total_monthly'] = total_monthly
+    result['total'] = sum(v.get('total', 0) for v in result.values() if isinstance(v, dict))
     result['current_month'] = now.strftime('%B %Y')
     
     return result
@@ -1441,6 +1449,47 @@ async def update_bmi(
     
     # Return the NEW record (which is now the latest)
     return new_record
+
+
+@router.delete('/{record_id}')
+def delete_bmi_record(record_id: int, db: Session = Depends(get_db)):
+    record = db.query(models.BMIRecord).filter(models.BMIRecord.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail='BMI record not found')
+
+    is_latest = bool(record.is_latest)
+    personnel_id = record.personnel_id
+    name = (record.name or '').strip()
+
+    photo_paths = [
+        resolve_upload_path(record.photo_front),
+        resolve_upload_path(record.photo_left),
+        resolve_upload_path(record.photo_right),
+    ]
+
+    db.delete(record)
+    db.commit()
+
+    if is_latest:
+        candidate_query = db.query(models.BMIRecord)
+        if personnel_id:
+            candidate_query = candidate_query.filter(models.BMIRecord.personnel_id == personnel_id)
+        elif name:
+            candidate_query = candidate_query.filter(models.BMIRecord.name.ilike(name))
+
+        latest_remaining = candidate_query.order_by(models.BMIRecord.date_taken.desc(), models.BMIRecord.id.desc()).first()
+        if latest_remaining:
+            latest_remaining.is_latest = True
+            db.commit()
+
+    for photo_path in photo_paths:
+        try:
+            if photo_path and os.path.exists(photo_path):
+                os.remove(photo_path)
+        except OSError:
+            pass
+
+    return {'message': 'BMI record deleted successfully'}
 
 
 @router.get('/record/{record_id}', response_model=schemas.BMISchema)

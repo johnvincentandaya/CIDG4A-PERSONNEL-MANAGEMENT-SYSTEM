@@ -23,6 +23,20 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def _is_expected_migration_error(err: Exception) -> bool:
+    message = str(err).lower()
+    return (
+        'duplicate column name' in message
+        or 'already exists' in message
+        or 'no such table' in message
+    )
+
+
+def _handle_migration_error(err: Exception, step: str):
+    if not _is_expected_migration_error(err):
+        print(f"Migration warning ({step}): {err}")
+
+
 def init_db():
     from . import models
 
@@ -39,8 +53,8 @@ def migrate_db():
                 ALTER TABLE bmi_records ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             """))
             conn.commit()
-        except Exception:
-            pass  # Column might already exist
+        except Exception as e:
+            _handle_migration_error(e, "add bmi_records.created_at")
         
         try:
             # Add updated_at column to bmi_records if it doesn't exist
@@ -48,8 +62,8 @@ def migrate_db():
                 ALTER TABLE bmi_records ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             """))
             conn.commit()
-        except Exception:
-            pass  # Column might already exist
+        except Exception as e:
+            _handle_migration_error(e, "add bmi_records.updated_at")
         
         try:
             # Add personnel_id column to bmi_records if it doesn't exist
@@ -57,8 +71,8 @@ def migrate_db():
                 ALTER TABLE bmi_records ADD COLUMN personnel_id INTEGER REFERENCES personnel(id)
             """))
             conn.commit()
-        except Exception:
-            pass  # Column might already exist
+        except Exception as e:
+            _handle_migration_error(e, "add bmi_records.personnel_id")
         
         # Ensure indexes exist for performance
         try:
@@ -66,65 +80,65 @@ def migrate_db():
                 CREATE INDEX IF NOT EXISTS idx_bmi_personnel_id ON bmi_records(personnel_id)
             """))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "create idx_bmi_personnel_id")
         
         try:
             conn.execute(text("""
                 CREATE INDEX IF NOT EXISTS idx_bmi_date_taken ON bmi_records(date_taken)
             """))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "create idx_bmi_date_taken")
 
         # Ensure personnel table has required Form201 columns
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN badge_number VARCHAR'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.badge_number")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN qlf VARCHAR'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.qlf")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN date_of_reassignment TIMESTAMP'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.date_of_reassignment")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN designation VARCHAR'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.designation")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN date_of_designation TIMESTAMP'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.date_of_designation")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN highest_eligibility VARCHAR'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.highest_eligibility")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN contact_number VARCHAR'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.contact_number")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN birthdate TIMESTAMP'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.birthdate")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN religion VARCHAR'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.religion")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN section VARCHAR'))
             conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            _handle_migration_error(e, "add personnel.section")

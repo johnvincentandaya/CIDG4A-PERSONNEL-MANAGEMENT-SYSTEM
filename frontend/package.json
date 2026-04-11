@@ -18,7 +18,10 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "prestart": "kill-port 3001 8000",
+    "start": "concurrently -k -n FRONTEND,BACKEND -c blue,green \"npm run start:frontend\" \"npm run start:backend\"",
+    "start:frontend": "set PORT=3001 && react-scripts start",
+    "start:backend": "cd ../backend && py -3 -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
@@ -40,5 +43,9 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "kill-port": "^2.0.1"
   }
 }

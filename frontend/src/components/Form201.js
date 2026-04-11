@@ -166,11 +166,22 @@ export default function Form201(){
   const [autTotalUniformed, setAutTotalUniformed] = useState('50');
   
   const [reportModalTab, setReportModalTab] = useState('report');
+  const [loadError, setLoadError] = useState('');
 
   const { bump } = useContext(RefreshContext);
 
   useEffect(()=>{ load() },[])
-  function load(){ api.get('/api/personnel/').then(r=>setRecords(r.data)).catch(()=>{}); }
+  function load(){
+    api.get('/api/personnel/')
+      .then(r=>{
+        setRecords(r.data);
+        setLoadError('');
+      })
+      .catch((err)=>{
+        console.error('Failed to load Form 201 records', err);
+        setLoadError('Unable to load Form 201 records. Please refresh.');
+      });
+  }
 
   function resetModal(){
     setForm({
@@ -383,12 +394,36 @@ export default function Form201(){
     }
   }
 
+  async function deletePerson(id, fullName){
+    const ok = window.confirm(`Delete personnel record for ${fullName}? This action cannot be undone.`);
+    if (!ok) return;
+
+    try {
+      await api.delete(`/api/personnel/${id}`);
+      load();
+      try{ if (bump) bump(); }catch(e){}
+    } catch (err) {
+      const detail = err.response?.data?.detail || err.message;
+      alert('Unable to delete personnel record: ' + detail);
+    }
+  }
+
   function checkRequiredPersonal(){ 
-    const basic = form.rank && form.last_name && form.first_name && form.birthdate && form.religion;
+    const basic =
+      String(form.rank || '').trim() &&
+      String(form.last_name || '').trim() &&
+      String(form.first_name || '').trim() &&
+      String(form.birthdate || '').trim() &&
+      String(form.religion || '').trim();
     if (!basic) return false;
+
+    if ((form.status || '').toUpperCase() === 'OTHERS' && !String(form.status_custom || '').trim()) {
+      return false;
+    }
+
     // If rank is NUP, require NUP-specific fields
     if ((form.rank || '').toUpperCase() === 'NUP') {
-      if (!form.nup_rank || !form.nup_entry_number) return false;
+      if (!String(form.nup_rank || '').trim() || !String(form.nup_entry_number || '').trim()) return false;
     }
     return true;
   }
@@ -505,6 +540,10 @@ export default function Form201(){
         </div>
       </div>
 
+      {loadError && (
+        <div className="alert alert-warning" role="alert">{loadError}</div>
+      )}
+
       <div className="card-section p-3 mb-3">
         <div className="filter-bar">
           <div className="filter-controls">
@@ -551,7 +590,7 @@ export default function Form201(){
                   <th>Badge No.</th>
                   <th>Last Name</th>
                   <th>First Name</th>
-                  <th>M.I.</th>
+                  <th>Middle Name</th>
                   <th>Suffix</th>
                   <th>Unit</th>
                   <th>Status</th>
@@ -595,13 +634,22 @@ export default function Form201(){
                       </td>
                       <td>{new Date(r.date_added).toLocaleDateString()}</td>
                       <td>
-                        <button
-                          className="btn btn-sm btn-outline-primary"
-                          onClick={()=>editPerson(r.id)}
-                        >
-                          <i className="bi bi-pencil-square me-1" />
-                          Edit
-                        </button>
+                        <div className="d-flex gap-2">
+                          <button
+                            className="btn btn-sm btn-outline-primary"
+                            onClick={()=>editPerson(r.id)}
+                          >
+                            <i className="bi bi-pencil-square me-1" />
+                            Edit
+                          </button>
+                          <button
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={()=>deletePerson(r.id, `${r.rank || ''} ${r.last_name || ''}, ${r.first_name || ''}`.trim())}
+                          >
+                            <i className="bi bi-trash me-1" />
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -649,12 +697,11 @@ export default function Form201(){
 
                       <div className="col-md-4 mb-2"><label>Last Name *</label><input className="form-control" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})} /></div>
                       <div className="col-md-4 mb-2"><label>First Name *</label><input className="form-control" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})} /></div>
-                      <div className="col-md-4 mb-2"><label>M.I.</label><input className="form-control" value={form.mi} onChange={e=>setForm({...form,mi:e.target.value})} /></div>
+                      <div className="col-md-4 mb-2"><label>Middle Name</label><input className="form-control" value={form.mi} onChange={e=>setForm({...form,mi:e.target.value})} /></div>
 
-                      <div className="col-md-3 mb-2"><label>Suffix</label><input className="form-control" value={form.suffix} onChange={e=>setForm({...form,suffix:e.target.value})} /></div>
-                      <div className="col-md-3 mb-2"><label>QLF</label><input className="form-control" value={form.qlf} onChange={e=>setForm({...form,qlf:e.target.value})} /></div>
-                      <div className="col-md-3 mb-2"><label>Birthdate *</label><input type="date" className="form-control" value={form.birthdate} onChange={e=>setForm({...form,birthdate:e.target.value})} /></div>
-                      <div className="col-md-3 mb-2"><label>Religion *</label><input className="form-control" value={form.religion} onChange={e=>setForm({...form,religion:e.target.value})} /></div>
+                      <div className="col-md-4 mb-2"><label>Suffix</label><input className="form-control" value={form.suffix} onChange={e=>setForm({...form,suffix:e.target.value})} /></div>
+                      <div className="col-md-4 mb-2"><label>Birthdate *</label><input type="date" className="form-control" value={form.birthdate} onChange={e=>setForm({...form,birthdate:e.target.value})} /></div>
+                      <div className="col-md-4 mb-2"><label>Religion *</label><input className="form-control" value={form.religion} onChange={e=>setForm({...form,religion:e.target.value})} /></div>
 
                       <div className="col-md-4 mb-2"><label>Designation</label><input className="form-control" value={form.designation} onChange={e=>setForm({...form,designation:e.target.value})} /></div>
                       <div className="col-md-4 mb-2"><label>Date of Designation</label><input type="date" className="form-control" value={form.date_of_designation} onChange={e=>setForm({...form,date_of_designation:e.target.value})} /></div>
@@ -840,32 +887,38 @@ export default function Form201(){
                         )}
 
                         <div className="mb-2">
-                          <label>As-of Date</label>
+                          <label>As-of Date *</label>
                           <input type="date" className="form-control" value={reportAsOfDate} onChange={e=>setReportAsOfDate(e.target.value)} />
                         </div>
                         <div className="small text-muted">Current filters (Unit / Status) will be sent with the report if set.</div>
                       </div>
 
-                      <div className="col-md-6">
-                        <div className="mb-2">
-                          <label>Prepared By</label>
-                          <input className="form-control mb-1" placeholder="Name" value={preparedByName} onChange={e=>setPreparedByName(e.target.value)} />
-                          <input className="form-control mb-1" placeholder="Title" value={preparedByTitle} onChange={e=>setPreparedByTitle(e.target.value)} />
-                          <input type="file" accept="image/*" className="form-control" onChange={e=>setPreparedBySignature(validateImage(e.target.files?.[0] || null))} />
-                        </div>
-
-                        <div className="mb-2">
-                          <label>Verified By</label>
-                          <input className="form-control mb-1" placeholder="Name" value={verifiedByName} onChange={e=>setVerifiedByName(e.target.value)} />
-                          <input className="form-control mb-1" placeholder="Title" value={verifiedByTitle} onChange={e=>setVerifiedByTitle(e.target.value)} />
-                          <input type="file" accept="image/*" className="form-control" onChange={e=>setVerifiedBySignature(validateImage(e.target.files?.[0] || null))} />
-                        </div>
-
-                        <div className="mb-2">
-                          <label>Noted By</label>
-                          <input className="form-control mb-1" placeholder="Name" value={notedByName} onChange={e=>setNotedByName(e.target.value)} />
-                          <input className="form-control mb-1" placeholder="Title" value={notedByTitle} onChange={e=>setNotedByTitle(e.target.value)} />
-                          <input type="file" accept="image/*" className="form-control" onChange={e=>setNotedBySignature(validateImage(e.target.files?.[0] || null))} />
+                      <div className="col-12 mt-2">
+                        <div className="row g-2">
+                          <div className="col-md-4">
+                            <div className="border rounded p-2 h-100">
+                              <label className="fw-semibold">Prepared by</label>
+                              <input className="form-control mb-1" placeholder="Name" value={preparedByName} onChange={e=>setPreparedByName(e.target.value)} />
+                              <input className="form-control mb-1" placeholder="Position" value={preparedByTitle} onChange={e=>setPreparedByTitle(e.target.value)} />
+                              <input type="file" accept="image/*" className="form-control" onChange={e=>setPreparedBySignature(validateImage(e.target.files?.[0] || null))} />
+                            </div>
+                          </div>
+                          <div className="col-md-4">
+                            <div className="border rounded p-2 h-100">
+                              <label className="fw-semibold">Verified Correct by</label>
+                              <input className="form-control mb-1" placeholder="Name" value={verifiedByName} onChange={e=>setVerifiedByName(e.target.value)} />
+                              <input className="form-control mb-1" placeholder="Position" value={verifiedByTitle} onChange={e=>setVerifiedByTitle(e.target.value)} />
+                              <input type="file" accept="image/*" className="form-control" onChange={e=>setVerifiedBySignature(validateImage(e.target.files?.[0] || null))} />
+                            </div>
+                          </div>
+                          <div className="col-md-4">
+                            <div className="border rounded p-2 h-100">
+                              <label className="fw-semibold">Noted by</label>
+                              <input className="form-control mb-1" placeholder="Name" value={notedByName} onChange={e=>setNotedByName(e.target.value)} />
+                              <input className="form-control mb-1" placeholder="Position" value={notedByTitle} onChange={e=>setNotedByTitle(e.target.value)} />
+                              <input type="file" accept="image/*" className="form-control" onChange={e=>setNotedBySignature(validateImage(e.target.files?.[0] || null))} />
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -916,7 +969,10 @@ export default function Form201(){
                 </div>
                 <div className="modal-footer">
                   <button className="btn btn-secondary" onClick={()=>setShowReportModal(false)}>Cancel</button>
-                  <button className="btn btn-primary" disabled={!reportFileName.trim()} onClick={async ()=>{
+                  <button className="btn btn-primary" disabled={!(
+                    reportFileName.trim() &&
+                    reportAsOfDate
+                  )} onClick={async ()=>{
                     try{
                       const fd = new FormData();
                       fd.append('file_name', reportFileName.trim());
