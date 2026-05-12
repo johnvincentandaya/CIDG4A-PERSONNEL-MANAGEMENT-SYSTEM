@@ -905,6 +905,10 @@ def personnel_report(
     authorized_values: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
+    """
+    Generate comprehensive Form 201 Excel report with all tabs.
+    Each tab has its own sorting and layout rules as specified.
+    """
     from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
     from openpyxl.utils import get_column_letter
 
@@ -956,34 +960,7 @@ def personnel_report(
     except Exception:
         display_date = datetime.utcnow().strftime('%B %d, %Y')
 
-    def unit_key(raw_unit: str):
-        u = up(raw_unit)
-        if u in ('RHQ', 'RFU4A HQS', 'REGIONAL OFFICE', 'HEADQUARTERS'):
-            return 'RHQ'
-        if 'CAV' in u:
-            return 'CAVITE'
-        if 'LAG' in u:
-            return 'LAGUNA'
-        if 'BAT' in u:
-            return 'BATANGAS'
-        if 'RIZ' in u:
-            return 'RIZAL'
-        if 'QZN' in u or 'QUE' in u:
-            return 'QUEZON'
-        return u
-
-    def unit_variants(raw_unit: Optional[str]):
-        key = unit_key(raw_unit)
-        variants = {
-            'RHQ': ['RHQ', 'RFU4A HQS', 'REGIONAL OFFICE', 'HEADQUARTERS'],
-            'CAVITE': ['CAVITE', 'CAVITE PFU', 'CAV PFU'],
-            'LAGUNA': ['LAGUNA', 'LAGUNA PFU', 'LAG PFU'],
-            'BATANGAS': ['BATANGAS', 'BATANGAS PFU', 'BATS PFU'],
-            'RIZAL': ['RIZAL', 'RIZAL PFU'],
-            'QUEZON': ['QUEZON', 'QUEZON PFU', 'QZN PFU'],
-        }
-        return variants.get(key, [key] if key else [])
-
+    # Query personnel with filters
     q = db.query(models.Personnel)
     if scope == 'RHQ only':
         q = q.filter(func.upper(models.Personnel.unit).in_(unit_variants('RHQ')))
@@ -996,45 +973,64 @@ def personnel_report(
         if unit_opts:
             q = q.filter(func.upper(models.Personnel.unit).in_(unit_opts))
     if status and status != 'All Status':
-        q = q.filter(func.upper(models.Personnel.status) == up(status))
+        q = q.filter(models.Personnel.status == status)
+
     all_personnel = q.all()
+    
+    # Debug: Check the type and content of all_personnel
+    print(f"DEBUG all_personnel type: {type(all_personnel)}, length: {len(all_personnel) if all_personnel else 0}")
+    if all_personnel:
+        print(f"DEBUG first item type: {type(all_personnel[0])}")
+        print(f"DEBUG first item: {all_personnel[0]}")
+        if hasattr(all_personnel[0], '__dict__'):
+            print(f"DEBUG first item dict: {all_personnel[0].__dict__}")
 
-    PCO_RANKS = ['PMGEN', 'PBGEN', 'PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT']
-    PNCO_RANKS = ['PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT']
-    UNIFORMED_ORDER = ['PGEN', 'PLTGEN', 'PMGEN', 'PBGEN', 'PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT', 'PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT']
-    UNIFORMED_ORDER_MAP = {r: i for i, r in enumerate(UNIFORMED_ORDER)}
+    def safe(v):
+        if v is None:
+            return ''
+        if isinstance(v, str) and not v.strip():
+            return ''
+        return v
 
-    def is_nup(p):
-        return up(getattr(p, 'rank', '')) == 'NUP' or up(getattr(p, 'status', '')) == 'NUP'
+    def fmt_date(v):
+        if not v:
+            return ''
+        try:
+            return v.strftime('%Y-%m-%d')
+        except Exception:
+            return str(v)
 
-    def person_rank(p):
-        if is_nup(p):
-            return up(getattr(p, 'nup_rank', '') or getattr(p, 'rank', 'NUP'))
-        return up(getattr(p, 'rank', ''))
-
-    def is_pco(p):
-        return person_rank(p) in PCO_RANKS
-
-    def is_pnco(p):
-        return person_rank(p) in PNCO_RANKS
+    # RANK ORDER for sorting uniformed personnel (highest to lowest)
+    RANK_ORDER = {
+        'PGEN': 1, 'PLTGEN': 2, 'PMGEN': 3, 'PBGEN': 4, 'PCOL': 5,
+        'PLTCOL': 6, 'PMAJ': 7, 'PCPT': 8, 'PLT': 9,
+        'PEMS': 10, 'PCMS': 11, 'PSMS': 12, 'PMSG': 13, 'PSSG': 14,
+        'PCPL': 15, 'PAT': 16
+    }
 
     def rank_sort_key(p):
         r = person_rank(p)
         return (UNIFORMED_ORDER_MAP.get(r, 999), up(p.last_name), up(p.first_name), up(p.mi), up(p.suffix))
 
     def alpha_sort_key(p):
-        return (up(p.last_name), up(p.first_name), up(p.mi), up(p.suffix), person_rank(p))
-
-    def entry_no_sort_key(p):
-        return (to_int(getattr(p, 'nup_entry_number', None), 999999), up(p.last_name), up(p.first_name))
-
-    signature_present = {
-        'prepared': prepared_by_signature is not None,
-        'verified': verified_by_signature is not None,
-        'noted': noted_by_signature is not None,
-    }
+        return (p.last_name or '', p.first_name or '')
 
     wb = Workbook()
+    sheet_names = [
+        'LIST OF NUP',
+        'LIST OF U.P',
+        'TERRITORIAL STRENGTH',
+        'RANK STRUCTURE',
+        'RANK PROFILE',
+        'ALPHA LIST',
+        'DISPOSITION OF TROOPS',
+        'PERSONNEL FILL-UP',
+        'KEY OFFICERS',
+        'STATION LIST',
+        'RANK INVENTORY',
+        'CIDG RFU4A PCO CONTACT LIST',
+    ]
+
     thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     header_fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
     section_fill = PatternFill(start_color='D9D9D9', end_color='D9D9D9', fill_type='solid')
@@ -1049,71 +1045,35 @@ def personnel_report(
         ws.cell(row=2, column=1).font = Font(bold=True, size=11)
         ws.cell(row=2, column=1).alignment = Alignment(horizontal='center')
         ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=cols)
-        ws.cell(row=3, column=1).value = f'(AS OF {display_date.upper()})'
-        ws.cell(row=3, column=1).font = Font(italic=True, size=10)
-        ws.cell(row=3, column=1).alignment = Alignment(horizontal='center')
+        c3 = ws.cell(row=3, column=1)
+        c3.value = f"(as of {display_date})"
+        c3.font = Font(italic=True, size=10)
+        c3.alignment = Alignment(horizontal='center', vertical='center')
 
-    def write_header(ws, row, headers):
-        for i, h in enumerate(headers, start=1):
-            c = ws.cell(row=row, column=i)
-            c.value = h
-            c.font = Font(bold=True, color='FFFFFF')
-            c.fill = header_fill
-            c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-            c.border = thin
+    # Helper to write signature blocks
+    def write_signatures(ws, start_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title):
+        sig_row = start_row
+        # Prepared by
+        ws.cell(row=sig_row, column=1).value = 'Prepared by:'
+        ws.cell(row=sig_row, column=1).font = Font(bold=True)
+        ws.cell(row=sig_row+1, column=1).value = prepared_by_name or ''
+        ws.cell(row=sig_row+2, column=1).value = prepared_by_title or ''
+        
+        # Verified by
+        ws.cell(row=sig_row, column=4).value = 'Verified Correct by:'
+        ws.cell(row=sig_row, column=4).font = Font(bold=True)
+        ws.cell(row=sig_row+1, column=4).value = verified_by_name or ''
+        ws.cell(row=sig_row+2, column=4).value = verified_by_title or ''
+        
+        # Noted by
+        ws.cell(row=sig_row, column=7).value = 'Noted by:'
+        ws.cell(row=sig_row, column=7).font = Font(bold=True)
+        ws.cell(row=sig_row+1, column=7).value = noted_by_name or ''
+        ws.cell(row=sig_row+2, column=7).value = noted_by_title or ''
 
-    def write_row(ws, row, values, center_from=2):
-        for i, v in enumerate(values, start=1):
-            c = ws.cell(row=row, column=i)
-            c.value = v
-            c.border = thin
-            c.alignment = Alignment(horizontal='center' if i >= center_from else 'left', vertical='center')
-
-    def write_signatures(ws, start_row, checked_label='Verified Correct by:'):
-        blocks = [
-            ('Prepared by:', prepared_by_name, prepared_by_title, signature_present['prepared']),
-            (checked_label, verified_by_name, verified_by_title, signature_present['verified']),
-            ('Noted by:', noted_by_name, noted_by_title, signature_present['noted']),
-        ]
-        max_col = max(ws.max_column, 9)
-        base = max_col // 3
-        rem = max_col % 3
-        spans = []
-        col_start = 1
-        for idx in range(3):
-            width = base + (1 if idx < rem else 0)
-            col_end = col_start + max(width, 1) - 1
-            spans.append((col_start, col_end))
-            col_start = col_end + 1
-
-        for idx, (label, name, title, esig) in enumerate(blocks):
-            c1, c2 = spans[idx]
-            ws.merge_cells(start_row=start_row, start_column=c1, end_row=start_row, end_column=c2)
-            ws.merge_cells(start_row=start_row + 1, start_column=c1, end_row=start_row + 1, end_column=c2)
-            ws.merge_cells(start_row=start_row + 2, start_column=c1, end_row=start_row + 2, end_column=c2)
-            ws.merge_cells(start_row=start_row + 3, start_column=c1, end_row=start_row + 3, end_column=c2)
-            ws.merge_cells(start_row=start_row + 4, start_column=c1, end_row=start_row + 4, end_column=c2)
-
-            ws.cell(row=start_row, column=c1).value = label
-            ws.cell(row=start_row, column=c1).font = Font(bold=True)
-            ws.cell(row=start_row, column=c1).alignment = Alignment(horizontal='center')
-
-            ws.cell(row=start_row + 1, column=c1).value = 'E-SIGN: ON FILE' if esig else ''
-            ws.cell(row=start_row + 1, column=c1).alignment = Alignment(horizontal='center')
-
-            ws.cell(row=start_row + 2, column=c1).value = up(name)
-            ws.cell(row=start_row + 2, column=c1).font = Font(bold=True)
-            ws.cell(row=start_row + 2, column=c1).alignment = Alignment(horizontal='center')
-
-            ws.cell(row=start_row + 3, column=c1).value = up(title)
-            ws.cell(row=start_row + 3, column=c1).alignment = Alignment(horizontal='center')
-
-            ws.cell(row=start_row + 4, column=c1).value = ''
-            ws.cell(row=start_row + 4, column=c1).alignment = Alignment(horizontal='center')
-
-        ws.row_dimensions[start_row + 1].height = 24
-
-    # TAB 1: LIST OF NUP
+    # ============================================================
+    # TAB 1: LIST OF NUP - Sorted by Entry Number
+    # ============================================================
     ws = wb.active
     ws.title = 'LIST OF NUP'
     write_title(ws, 'LIST OF NON-UNIFORMED PERSONNEL', 7)
