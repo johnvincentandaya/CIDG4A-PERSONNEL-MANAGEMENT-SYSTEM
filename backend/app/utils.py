@@ -83,10 +83,13 @@ def personnel_folder_name(first_name: str, last_name: str) -> str:
     last = safe_path_component(last_name, "LAST")
     return f"FORM201_{first}_{last}"
 
-def bmi_folder_name(first_name: str, last_name: str) -> str:
-    # Use required format: BMI_<First>_<Last>
+def bmi_folder_name(first_name: str, last_name: str, middle_initial: Optional[str] = None) -> str:
+    # Use required format: BMI_<First>_<MI>_<Last> when MI is provided
     first = safe_path_component(first_name, "FIRST")
     last = safe_path_component(last_name, "LAST")
+    mi = safe_path_component(middle_initial, "MI") if middle_initial else ''
+    if mi:
+        return f"BMI_{first}_{mi}_{last}"
     return f"BMI_{first}_{last}"
 
 def save_upload_file(uploaded, dest_path: str) -> str:

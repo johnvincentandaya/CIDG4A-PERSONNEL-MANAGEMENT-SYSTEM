@@ -1,7 +1,6 @@
 import React, { useState, useContext, useEffect } from 'react';
 import cidgLogo from '../assets/cidg-logo.png';
 import { AuthContext } from '../contexts/AuthContext';
-import { ThemeContext } from '../contexts/ThemeContext';
 import { useNavigate } from 'react-router-dom';
 
 export default function Login(){

@@ -77,6 +77,7 @@ class PersonnelSchema(BaseModel):
 class BMICreate(BaseModel):
     rank: str
     name: str
+    mi: Optional[str] = None
     unit: str
     age: int
     sex: str
@@ -94,6 +95,7 @@ class BMISchema(BaseModel):
     personnel_id: Optional[int] = None
     rank: str
     name: str
+    mi: Optional[str] = None
     unit: str
     age: int
     sex: Optional[str]

@@ -103,6 +103,49 @@ class BMIRecord(Base):
     monthly_weights = relationship('MonthlyWeight', back_populates='bmi_record', cascade='all, delete')
     personnel = relationship('Personnel', back_populates='bmi_records')
 
+    @property
+    def mi(self):
+        """Return the middle initial for this record (from linked Personnel when available,
+        otherwise attempt to parse from the stored name)."""
+        try:
+            if self.personnel and getattr(self.personnel, 'mi', None):
+                return (self.personnel.mi or '').strip()
+        except Exception:
+            pass
+
+        # Fallback: try to parse a single-letter middle initial from the stored name
+        if self.name:
+            parts = [p.strip() for p in (self.name or '').split() if p]
+            if len(parts) >= 3:
+                for token in parts[1:-1]:
+                    t = token.strip().rstrip('.')
+                    if len(t) == 1:
+                        return t
+        return None
+
+    @property
+    def display_name(self):
+        """Return standardized display name: First [MI] Last [Suffix]. Prefer linked Personnel."""
+        try:
+            if self.personnel:
+                p = self.personnel
+                first = (p.first_name or '').strip()
+                mi = (p.mi or '').strip()
+                last = (p.last_name or '').strip()
+                suffix = (p.suffix or '').strip()
+                parts = [first]
+                if mi:
+                    parts.append(mi)
+                parts.append(last)
+                name = ' '.join([p for p in parts if p])
+                if suffix:
+                    name = f"{name} {suffix}"
+                return name.strip()
+        except Exception:
+            pass
+        # Fallback to raw stored name
+        return (self.name or '').strip()
+
 class MonthlyWeight(Base):
     __tablename__ = 'monthly_weights'
     id = Column(Integer, primary_key=True, index=True)

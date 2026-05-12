@@ -892,25 +892,6 @@ def generate_form201_report(
     )
 
 
-def write_header(ws, row, headers):
-    for col, header in enumerate(headers, start=1):
-        cell = ws.cell(row=row, column=col)
-        cell.value = header
-        cell.font = Font(bold=True)
-        cell.border = thin
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.fill = header_fill
-
-def write_row(ws, row, values, center_from=None):
-    for col, value in enumerate(values, start=1):
-        cell = ws.cell(row=row, column=col)
-        cell.value = value
-        cell.border = thin
-        if center_from and col >= center_from:
-            cell.alignment = Alignment(horizontal='center')
-        else:
-            cell.alignment = Alignment(horizontal='left')
-
 # Helper functions for Form 201 report
 def is_nup(p):
     """Check if personnel is Non-Uniformed Personnel (NUP)"""
@@ -1164,8 +1145,37 @@ def personnel_report(
         c3.font = Font(italic=True, size=10)
         c3.alignment = Alignment(horizontal='center', vertical='center')
 
+    def write_header(ws, row, headers):
+        for col, header in enumerate(headers, start=1):
+            cell = ws.cell(row=row, column=col)
+            cell.value = header
+            cell.font = Font(bold=True)
+            cell.border = thin
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            cell.fill = header_fill
+
+    def write_row(ws, row, values, center_from=None):
+        for col, value in enumerate(values, start=1):
+            cell = ws.cell(row=row, column=col)
+            cell.value = value
+            cell.border = thin
+            if center_from and col >= center_from:
+                cell.alignment = Alignment(horizontal='center')
+            else:
+                cell.alignment = Alignment(horizontal='left')
+
     # Helper to write signature blocks
-    def write_signatures(ws, start_row, prepared_by_name, prepared_by_title, verified_by_name, verified_by_title, noted_by_name, noted_by_title):
+    def write_signatures(
+        ws,
+        start_row,
+        prepared_by_name: str = '',
+        prepared_by_title: str = '',
+        verified_by_name: str = '',
+        verified_by_title: str = '',
+        noted_by_name: str = '',
+        noted_by_title: str = '',
+        checked_label: str = 'Verified Correct by:',
+    ):
         sig_row = start_row
         # Prepared by
         ws.cell(row=sig_row, column=1).value = 'Prepared by:'
@@ -1173,8 +1183,8 @@ def personnel_report(
         ws.cell(row=sig_row+1, column=1).value = prepared_by_name or ''
         ws.cell(row=sig_row+2, column=1).value = prepared_by_title or ''
         
-        # Verified by
-        ws.cell(row=sig_row, column=4).value = 'Verified Correct by:'
+        # Verified by / Checked by
+        ws.cell(row=sig_row, column=4).value = checked_label or 'Verified Correct by:'
         ws.cell(row=sig_row, column=4).font = Font(bold=True)
         ws.cell(row=sig_row+1, column=4).value = verified_by_name or ''
         ws.cell(row=sig_row+2, column=4).value = verified_by_title or ''

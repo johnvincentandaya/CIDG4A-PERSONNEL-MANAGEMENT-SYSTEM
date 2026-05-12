@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Form201 from './components/Form201';
 import BMIMonitor from './components/BMIMonitor';
+import ChangePassword from './components/ChangePassword';
 import Login from './components/Login';
 import { useContext } from 'react';
 import { AuthContext } from './contexts/AuthContext';
@@ -42,6 +43,7 @@ function App() {
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/form201" element={<ProtectedRoute><Form201 /></ProtectedRoute>} />
             <Route path="/bmi" element={<ProtectedRoute><BMIMonitor /></ProtectedRoute>} />
+            <Route path="/change-password" element={<ProtectedRoute><ChangePassword /></ProtectedRoute>} />
           </Routes>
         </div>
       </div>

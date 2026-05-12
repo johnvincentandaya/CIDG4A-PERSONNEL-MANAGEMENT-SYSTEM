@@ -224,6 +224,78 @@ body {
   margin-top: 16px;
 }
 
+.password-strength-panel {
+  background: rgba(31, 49, 105, 0.06);
+  border: 1px solid rgba(31, 49, 105, 0.12);
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.strength-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.strength-0 { background: #f43f5e; }
+.strength-1 { background: #f97316; }
+.strength-2 { background: #eab308; }
+.strength-3 { background: #22c55e; }
+.strength-4 { background: #16a34a; }
+.strength-5 { background: #0f766e; }
+
+.strength-meter {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.strength-step {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.strength-step.active {
+  background: var(--cidg-blue);
+}
+
+.password-requirements {
+  display: grid;
+  gap: 8px;
+}
+
+.requirement-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--cidg-text-muted);
+}
+
+.requirement-row.valid {
+  color: #0f766e;
+}
+
+.requirement-row.invalid {
+  color: #334155;
+}
+
+.requirement-icon {
+  width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+
 .section-title {
   font-size: 14px;
   font-weight: 600;
@@ -621,4 +693,120 @@ body.dark .badge-bmi--underweight {
 body.dark .app-main,
 body.dark .app-main * {
   color: var(--cidg-text-light) !important;
+}
+
+/* Login page styling */
+.login-page {
+  background: linear-gradient(180deg, #eaf4ff 0%, #f8fafc 45%, #ffffff 100%);
+}
+
+.login-page .card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  box-shadow: 0 22px 45px rgba(15, 23, 42, 0.12);
+}
+
+.login-page .form-control {
+  border-radius: 12px;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+.login-page .input-group .form-control {
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+
+.login-page .btn {
+  border-radius: 10px;
+}
+
+.modal.d-block {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1050;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.modal-content {
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.18);
+}
+
+.modal-header,
+.modal-footer {
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+.modal-header {
+  background: rgba(243, 244, 246, 0.95);
+}
+
+.modal-title {
+  font-weight: 600;
+}
+
+.modal-body {
+  padding: 1.35rem;
+}
+
+.modal-footer {
+  padding: 1rem 1.35rem 1.25rem;
+}
+
+.card-section 
+{
+  padding: 18px;
+}
+
+.card-section .btn {
+  border-radius: 10px;
+}
+
+.form-control,
+.form-select {
+  border-radius: 12px;
+  border-color: rgba(15, 23, 42, 0.14);
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--cidg-blue);
+  box-shadow: 0 0 0 0.2rem rgba(59, 130, 246, 0.14);
+}
+
+.table-wrapper {
+  background: #ffffff;
+}
+
+.table-wrapper .btn {
+  border-radius: 9px;
+}
+
+.badge-status,
+.badge-bmi {
+  transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.badge-status:hover,
+.badge-bmi:hover {
+  transform: translateY(-1px);
+}
+
+.theme-toggle-button {
+  border-radius: 999px;
+  padding: 7px 14px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+}
+
+@media (max-width: 767.98px) {
+  .app-main {
+    padding: 16px 12px;
+  }
 }

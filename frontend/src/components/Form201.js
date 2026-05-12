@@ -1046,7 +1046,7 @@ export default function Form201(){
                       const disposition = res.headers && (res.headers['content-disposition'] || res.headers['Content-Disposition']);
                       let filename = '';
                       if (disposition) {
-                        const m = disposition.match(/filename=(?:")?([^;\"]+)/i);
+                        const m = disposition.match(/filename=(?:")?([^;"]+)/i);
                         if (m && m[1]) filename = m[1].trim();
                       }
                       if (!filename) filename = `${reportFileName.trim()}.xlsx`;

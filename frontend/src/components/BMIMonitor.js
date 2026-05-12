@@ -1100,11 +1100,11 @@ export default function BMIMonitor(){
                               </td>
                               <td>
                                 <button 
-                                  className="btn btn-sm btn-outline-primary"
-                                  onClick={() => viewSingleResult(rec)}
-                                  title="View PDF"
+                                  className="btn btn-sm btn-outline-warning"
+                                  onClick={() => openUpdate(rec)}
+                                  title="Edit BMI Record"
                                 >
-                                  <i className="bi bi-eye"></i>
+                                  <i className="bi bi-pencil-square"></i>
                                 </button>
                               </td>
                             </tr>

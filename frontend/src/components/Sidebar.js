@@ -50,6 +50,15 @@ export default function Sidebar(){
           <i className="bi bi-activity" />
           <span>BMI Monitoring</span>
         </NavLink>
+        <NavLink
+          to="/change-password"
+          className={({ isActive }) =>
+            'sidebar-nav-link' + (isActive ? ' active' : '')
+          }
+        >
+          <i className="bi bi-key-fill" />
+          <span>Change Password</span>
+        </NavLink>
       </nav>
 
       <div className="sidebar-footer">
