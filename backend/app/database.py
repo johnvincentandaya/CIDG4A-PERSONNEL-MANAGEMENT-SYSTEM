@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from sqlalchemy import create_engine, text
+from sqlalchemy import inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 
@@ -46,6 +47,25 @@ def init_db():
 def migrate_db():
     """Add missing columns to existing tables for migration."""
     with engine.connect() as conn:
+        inspector = None
+        try:
+            inspector = inspect(conn)
+        except Exception:
+            inspector = None
+
+        bmi_columns = set()
+        personnel_columns = set()
+        try:
+            if inspector and 'bmi_records' in inspector.get_table_names():
+                bmi_columns = {c.get('name') for c in inspector.get_columns('bmi_records') if c.get('name')}
+        except Exception:
+            bmi_columns = set()
+        try:
+            if inspector and 'personnel' in inspector.get_table_names():
+                personnel_columns = {c.get('name') for c in inspector.get_columns('personnel') if c.get('name')}
+        except Exception:
+            personnel_columns = set()
+
         # Check if bmi_records table exists and add missing columns
         try:
             # Add created_at column to bmi_records if it doesn't exist
@@ -73,6 +93,36 @@ def migrate_db():
             conn.commit()
         except Exception as e:
             _handle_migration_error(e, "add bmi_records.personnel_id")
+
+        # BMI history support: mark latest BMI per personnel/name
+        added_is_latest = False
+        if 'is_latest' not in bmi_columns:
+            try:
+                conn.execute(text("""
+                    ALTER TABLE bmi_records ADD COLUMN is_latest BOOLEAN DEFAULT 1
+                """))
+                conn.commit()
+                added_is_latest = True
+            except Exception as e:
+                _handle_migration_error(e, "add bmi_records.is_latest")
+
+        if 'status' not in bmi_columns:
+            try:
+                conn.execute(text("""
+                    ALTER TABLE bmi_records ADD COLUMN status TEXT DEFAULT 'Active'
+                """))
+                conn.commit()
+            except Exception as e:
+                _handle_migration_error(e, "add bmi_records.status")
+
+        if 'status_custom' not in bmi_columns:
+            try:
+                conn.execute(text("""
+                    ALTER TABLE bmi_records ADD COLUMN status_custom TEXT
+                """))
+                conn.commit()
+            except Exception as e:
+                _handle_migration_error(e, "add bmi_records.status_custom")
         
         # Ensure indexes exist for performance
         try:
@@ -91,12 +141,45 @@ def migrate_db():
         except Exception as e:
             _handle_migration_error(e, "create idx_bmi_date_taken")
 
-        # Ensure personnel table has required Form201 columns
         try:
-            conn.execute(text('ALTER TABLE personnel ADD COLUMN badge_number VARCHAR'))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_bmi_is_latest ON bmi_records(is_latest)
+            """))
             conn.commit()
         except Exception as e:
-            _handle_migration_error(e, "add personnel.badge_number")
+            _handle_migration_error(e, "create idx_bmi_is_latest")
+
+        # Initialize is_latest only when the column is newly added.
+        if added_is_latest:
+            try:
+                conn.execute(text("""
+                    UPDATE bmi_records SET is_latest = 0
+                """))
+                conn.commit()
+
+                # Mark latest per name (best-effort for legacy records without personnel_id).
+                conn.execute(text("""
+                    UPDATE bmi_records
+                    SET is_latest = 1
+                    WHERE id IN (
+                        SELECT id FROM bmi_records b1
+                        WHERE date_taken = (
+                            SELECT MAX(date_taken) FROM bmi_records b2
+                            WHERE b2.name = b1.name
+                        )
+                    )
+                """))
+                conn.commit()
+            except Exception as e:
+                _handle_migration_error(e, "init bmi_records.is_latest")
+
+        # Ensure personnel table has required Form201 columns
+        if 'badge_number' not in personnel_columns:
+            try:
+                conn.execute(text('ALTER TABLE personnel ADD COLUMN badge_number VARCHAR'))
+                conn.commit()
+            except Exception as e:
+                _handle_migration_error(e, "add personnel.badge_number")
         try:
             conn.execute(text('ALTER TABLE personnel ADD COLUMN qlf VARCHAR'))
             conn.commit()

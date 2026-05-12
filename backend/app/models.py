@@ -111,3 +111,18 @@ class MonthlyWeight(Base):
     month = Column(Integer)
     weight = Column(Float)
     bmi_record = relationship('BMIRecord', back_populates='monthly_weights')
+
+class BMIHistory(Base):
+    __tablename__ = 'bmi_history'
+    id = Column(Integer, primary_key=True, index=True)
+    personnel_id = Column(Integer, ForeignKey('personnel.id'), nullable=True, index=True)
+    month = Column(Integer, nullable=False)
+    year = Column(Integer, nullable=False)
+    weight = Column(Float, nullable=False)
+    bmi_result = Column(Float, nullable=False)
+    bmi_classification = Column(String, nullable=False)
+    waist = Column(Float)
+    hip = Column(Float)
+    wrist = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    personnel = relationship('Personnel', backref='bmi_history')

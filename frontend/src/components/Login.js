@@ -7,8 +7,9 @@ import { useNavigate } from 'react-router-dom';
 export default function Login(){
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const { login, loggedIn } = useContext(AuthContext);
-  const { theme } = useContext(ThemeContext);
+  // const { theme } = useContext(ThemeContext); // Not used in this component
   const navigate = useNavigate();
 
   useEffect(()=>{ if (loggedIn) navigate('/dashboard'); },[loggedIn,navigate]);
@@ -20,7 +21,7 @@ export default function Login(){
     if (res.ok){
       navigate('/dashboard');
     } else {
-      setError('Incorrect password. Please try again.');
+      setError(res.message || 'Incorrect password. Please try again.');
     }
   }
 
@@ -34,7 +35,12 @@ export default function Login(){
         <form onSubmit={doLogin}>
           <div className="mb-3">
             <label className="form-label">Password</label>
-            <input type="password" className="form-control" value={password} onChange={e=>setPassword(e.target.value)} autoFocus />
+            <div className="input-group">
+              <input type={showPassword ? 'text' : 'password'} className="form-control" value={password} onChange={e=>setPassword(e.target.value)} autoFocus />
+              <button type="button" className="btn btn-outline-secondary" onClick={() => setShowPassword(!showPassword)}>
+                <i className={`bi ${showPassword ? 'bi-eye-slash' : 'bi-eye'}`}></i>
+              </button>
+            </div>
           </div>
           {error && <div className="alert alert-danger small">{error}</div>}
           <div className="d-grid">

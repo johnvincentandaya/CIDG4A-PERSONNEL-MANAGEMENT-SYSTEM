@@ -56,7 +56,7 @@ export default function Sidebar(){
         <div className="d-flex justify-content-between align-items-center">
           <small>© {new Date().getFullYear()} CIDG RFU4A</small>
           <div>
-            <button className="btn btn-sm btn-outline-danger ms-2" onClick={()=>{ logout(); window.location.href='/login'; }}>Logout</button>
+            <button className="btn btn-sm btn-outline-danger ms-2" onClick={async ()=>{ await logout(); window.location.href='/login'; }}>Logout</button>
           </div>
         </div>
       </div>

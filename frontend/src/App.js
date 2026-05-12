@@ -11,22 +11,37 @@ import { useContext } from 'react';
 import { AuthContext } from './contexts/AuthContext';
 import ThemeToggle from './components/ThemeToggle';
 
+// Protected Route Component
+function ProtectedRoute({ children }) {
+  const { loggedIn, authReady } = useContext(AuthContext);
+
+  if (!authReady) return null;
+  return loggedIn ? children : <Navigate to="/login" replace />;
+}
+
 function App() {
-  const { loggedIn } = useContext(AuthContext);
+  const { loggedIn, authReady } = useContext(AuthContext);
   return (
     <BrowserRouter>
       <div className="app-shell">
         {loggedIn ? <Sidebar /> : null}
         <div className="app-main">
           <div className="app-topbar d-flex justify-content-end p-2">
-            <ThemeToggle />
+            {loggedIn && <ThemeToggle />}
           </div>
           <Routes>
-            <Route path="/" element={loggedIn ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />} />
+            <Route
+              path="/"
+              element={
+                !authReady
+                  ? null
+                  : (loggedIn ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />)
+              }
+            />
             <Route path="/login" element={<Login />} />
-            <Route path="/dashboard" element={loggedIn ? <Dashboard /> : <Navigate to="/login" replace />} />
-            <Route path="/form201" element={loggedIn ? <Form201 /> : <Navigate to="/login" replace />} />
-            <Route path="/bmi" element={loggedIn ? <BMIMonitor /> : <Navigate to="/login" replace />} />
+            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/form201" element={<ProtectedRoute><Form201 /></ProtectedRoute>} />
+            <Route path="/bmi" element={<ProtectedRoute><BMIMonitor /></ProtectedRoute>} />
           </Routes>
         </div>
       </div>

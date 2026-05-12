@@ -4,7 +4,14 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import SessionLocal, init_db
-from ..utils import ensure_upload_folders, personnel_folder_name, uploads_abs, uploads_rel
+from ..utils import (
+    ensure_upload_folders,
+    personnel_folder_name,
+    safe_path_component,
+    safe_resolve_upload_path,
+    uploads_abs,
+    uploads_rel,
+)
 import os
 from datetime import datetime
 from io import BytesIO
@@ -37,10 +44,10 @@ MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
 def abs_from_stored_path(stored_path: Optional[str]):
     if not stored_path:
         return None
-    norm = str(stored_path).replace("\\", "/")
-    idx = norm.find("uploads/")
-    rel = norm[idx + len("uploads/"):] if idx >= 0 else norm.lstrip("/")
-    return str(uploads_abs(*[p for p in rel.split("/") if p]))
+    try:
+        return str(safe_resolve_upload_path(stored_path))
+    except Exception:
+        return None
 
 
 async def read_and_validate_upload(file_obj: UploadFile):
@@ -293,9 +300,11 @@ async def create_personnel(
     db.refresh(p)
 
     # save uploaded files into structured folder (by unit) and record them
-    unit_folder = unit.upper()
-    person_folder_abs = uploads_abs('form_201', unit_folder, personnel_folder_name(first_name, last_name))
-    person_folder_rel = uploads_rel('form_201', unit_folder, personnel_folder_name(first_name, last_name))
+    safe_unit_folder = safe_path_component(unit, "UNIT").upper()
+    safe_first = safe_path_component(first_name, "FIRST").upper()
+    safe_last = safe_path_component(last_name, "LAST").upper()
+    person_folder_abs = uploads_abs('form_201', safe_unit_folder, personnel_folder_name(safe_first, safe_last))
+    person_folder_rel = uploads_rel('form_201', safe_unit_folder, personnel_folder_name(safe_first, safe_last))
     os.makedirs(person_folder_abs, exist_ok=True)
 
     async def save_single(file_obj: Optional[UploadFile], shortname: str):
@@ -303,7 +312,7 @@ async def create_personnel(
             return
         ext, content = await read_and_validate_upload(file_obj)
         # Use required file naming: FORM201_<First>_<Last>_<document>.pdf
-        dest_name = f"FORM201_{first_name}_{last_name}_{shortname}{ext}"
+        dest_name = f"FORM201_{safe_first}_{safe_last}_{shortname}{ext}"
         dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
         with open(dest_path_abs, 'wb') as out:
             out.write(content)
@@ -331,9 +340,9 @@ async def create_personnel(
             title = ""
             if mandatory_titles and idx < len(mandatory_titles):
                 title = mandatory_titles[idx]
-            safe_title = title.replace(" ", "_") if title else f"mandatory_{idx+1}"
+            safe_title = safe_path_component(title, f"mandatory_{idx+1}")
             ext, content = await read_and_validate_upload(f)
-            dest_name = f"FORM201_{first_name}_{last_name}_mandatory_{safe_title}{ext}"
+            dest_name = f"FORM201_{safe_first}_{safe_last}_mandatory_{safe_title}{ext}"
             dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             with open(dest_path_abs, "wb") as out:
                 out.write(content)
@@ -352,9 +361,9 @@ async def create_personnel(
             title = ""
             if specialized_titles and idx < len(specialized_titles):
                 title = specialized_titles[idx]
-            safe_title = title.replace(" ", "_") if title else f"specialized_{idx+1}"
+            safe_title = safe_path_component(title, f"specialized_{idx+1}")
             ext, content = await read_and_validate_upload(f)
-            dest_name = f"FORM201_{first_name}_{last_name}_specialized_{safe_title}{ext}"
+            dest_name = f"FORM201_{safe_first}_{safe_last}_specialized_{safe_title}{ext}"
             dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             with open(dest_path_abs, "wb") as out:
                 out.write(content)
@@ -505,9 +514,11 @@ async def update_person(
     db.commit()
 
     # person folder (by unit)
-    unit_folder = unit.upper()
-    person_folder_abs = uploads_abs('form_201', unit_folder, personnel_folder_name(first_name, last_name))
-    person_folder_rel = uploads_rel('form_201', unit_folder, personnel_folder_name(first_name, last_name))
+    safe_unit_folder = safe_path_component(unit, "UNIT").upper()
+    safe_first = safe_path_component(first_name, "FIRST").upper()
+    safe_last = safe_path_component(last_name, "LAST").upper()
+    person_folder_abs = uploads_abs('form_201', safe_unit_folder, personnel_folder_name(safe_first, safe_last))
+    person_folder_rel = uploads_rel('form_201', safe_unit_folder, personnel_folder_name(safe_first, safe_last))
     os.makedirs(person_folder_abs, exist_ok=True)
 
     # helper to replace or create document
@@ -515,7 +526,7 @@ async def update_person(
         if not file_obj:
             return
         ext, content = await read_and_validate_upload(file_obj)
-        dest_name = f"FORM201_{first_name}_{last_name}_{shortname}{ext}"
+        dest_name = f"FORM201_{safe_first}_{safe_last}_{shortname}{ext}"
         dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
         norm_path = f"{person_folder_rel}/{dest_name}".replace("\\", "/")
         # check existing doc
@@ -608,9 +619,9 @@ async def update_person(
             title = ''
             if mandatory_titles and idx < len(mandatory_titles):
                 title = mandatory_titles[idx]
-            safe_title = title.replace(' ', '_') if title else f'mandatory_new_{idx+1}'
+            safe_title = safe_path_component(title, f'mandatory_new_{idx+1}')
             ext, content = await read_and_validate_upload(f)
-            dest_name = f"FORM201_{first_name}_{last_name}_mandatory_{safe_title}{ext}"
+            dest_name = f"FORM201_{safe_first}_{safe_last}_mandatory_{safe_title}{ext}"
             dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             with open(dest_path_abs, 'wb') as out:
                 out.write(content)
@@ -623,9 +634,9 @@ async def update_person(
             title = ''
             if specialized_titles and idx < len(specialized_titles):
                 title = specialized_titles[idx]
-            safe_title = title.replace(' ', '_') if title else f'specialized_new_{idx+1}'
+            safe_title = safe_path_component(title, f'specialized_new_{idx+1}')
             ext, content = await read_and_validate_upload(f)
-            dest_name = f"FORM201_{first_name}_{last_name}_specialized_{safe_title}{ext}"
+            dest_name = f"FORM201_{safe_first}_{safe_last}_specialized_{safe_title}{ext}"
             dest_path_abs = os.path.join(str(person_folder_abs), dest_name)
             with open(dest_path_abs, 'wb') as out:
                 out.write(content)
@@ -881,6 +892,100 @@ def generate_form201_report(
     )
 
 
+def write_header(ws, row, headers):
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=row, column=col)
+        cell.value = header
+        cell.font = Font(bold=True)
+        cell.border = thin
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.fill = header_fill
+
+def write_row(ws, row, values, center_from=None):
+    for col, value in enumerate(values, start=1):
+        cell = ws.cell(row=row, column=col)
+        cell.value = value
+        cell.border = thin
+        if center_from and col >= center_from:
+            cell.alignment = Alignment(horizontal='center')
+        else:
+            cell.alignment = Alignment(horizontal='left')
+
+# Helper functions for Form 201 report
+def is_nup(p):
+    """Check if personnel is Non-Uniformed Personnel (NUP)"""
+    if hasattr(p, 'nup_rank') and p.nup_rank:
+        return True
+    if hasattr(p, 'nup_entry_number') and p.nup_entry_number is not None:
+        return True
+    return False
+
+def is_pco(p):
+    """Check if personnel is Police Commissioned Officer (PCO)"""
+    rank = (getattr(p, 'rank', '') or '').strip().upper()
+    return rank in ['PGEN', 'PLTGEN', 'PMGEN', 'PBGEN', 'PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT']
+
+def is_pnco(p):
+    """Check if personnel is Police Non-Commissioned Officer (PNCO)"""
+    rank = (getattr(p, 'rank', '') or '').strip().upper()
+    return rank in ['PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT']
+
+def person_rank(p):
+    """Get standardized rank for personnel"""
+    rank = (getattr(p, 'rank', '') or '').strip()
+    if not rank:
+        return getattr(p, 'nup_rank', '') or ''
+    return rank
+
+def entry_no_sort_key(p):
+    """Sort key for NUP entry numbers"""
+    entry_no = getattr(p, 'nup_entry_number', None)
+    if entry_no is not None:
+        return (0, entry_no)  # NUP with entry number first
+    return (1, 9999)  # NUP without entry number last
+
+
+def unit_key(raw_unit: Optional[str]) -> str:
+    u = (raw_unit or '').strip().upper()
+    if u in ('RHQ', 'RFU4A HQS', 'REGIONAL OFFICE', 'HEADQUARTERS'):
+        return 'RHQ'
+    if 'CAV' in u:
+        return 'CAVITE'
+    if 'LAG' in u:
+        return 'LAGUNA'
+    if 'BAT' in u:
+        return 'BATANGAS'
+    if 'RIZ' in u:
+        return 'RIZAL'
+    if 'QZN' in u or 'QUE' in u:
+        return 'QUEZON'
+    return u
+
+
+def unit_variants(raw_unit: Optional[str]) -> List[str]:
+    key = unit_key(raw_unit)
+    variants = {
+        'RHQ': ['RHQ', 'RFU4A HQS', 'REGIONAL OFFICE', 'HEADQUARTERS'],
+        'CAVITE': ['CAVITE', 'CAVITE PFU', 'CAV PFU'],
+        'LAGUNA': ['LAGUNA', 'LAGUNA PFU', 'LAG PFU'],
+        'BATANGAS': ['BATANGAS', 'BATANGAS PFU', 'BATS PFU'],
+        'RIZAL': ['RIZAL', 'RIZAL PFU'],
+        'QUEZON': ['QUEZON', 'QUEZON PFU', 'QZN PFU'],
+    }
+    return variants.get(key, [key] if key else [])
+
+# Constants for rank ordering
+PCO_RANKS = ['PGEN', 'PLTGEN', 'PMGEN', 'PBGEN', 'PCOL', 'PLTCOL', 'PMAJ', 'PCPT', 'PLT']
+PNCO_RANKS = ['PEMS', 'PCMS', 'PSMS', 'PMSG', 'PSSG', 'PCPL', 'PAT']
+
+# Uniformed rank order mapping (highest to lowest)
+UNIFORMED_ORDER_MAP = {
+    'PGEN': 1, 'PLTGEN': 2, 'PMGEN': 3, 'PBGEN': 4, 'PCOL': 5,
+    'PLTCOL': 6, 'PMAJ': 7, 'PCPT': 8, 'PLT': 9,
+    'PEMS': 10, 'PCMS': 11, 'PSMS': 12, 'PMSG': 13, 'PSSG': 14,
+    'PCPL': 15, 'PAT': 16
+}
+
 @router.post('/report')
 def personnel_report(
     unit: Optional[str] = Form(None),
@@ -962,6 +1067,15 @@ def personnel_report(
 
     # Query personnel with filters
     q = db.query(models.Personnel)
+    # As-of date filter (inclusive). Uses Personnel.date_added.
+    if as_of_date:
+        try:
+            as_of_dt = datetime.strptime(as_of_date, '%Y-%m-%d')
+            as_of_dt_end = as_of_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+            q = q.filter(models.Personnel.date_added <= as_of_dt_end)
+        except Exception:
+            pass
+
     if scope == 'RHQ only':
         q = q.filter(func.upper(models.Personnel.unit).in_(unit_variants('RHQ')))
     elif scope == 'Specific Unit' and specific_unit:
@@ -973,7 +1087,7 @@ def personnel_report(
         if unit_opts:
             q = q.filter(func.upper(models.Personnel.unit).in_(unit_opts))
     if status and status != 'All Status':
-        q = q.filter(models.Personnel.status == status)
+        q = q.filter(func.upper(models.Personnel.status) == up(status))
 
     all_personnel = q.all()
     

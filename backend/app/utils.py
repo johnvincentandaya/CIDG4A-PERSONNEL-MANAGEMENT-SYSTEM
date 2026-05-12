@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
-from typing import Tuple
+import re
+from typing import Optional, Tuple
 
 # Project root is one level above `backend/`
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +22,52 @@ def uploads_abs(*parts: str) -> Path:
     # Path used for writing files on disk
     return get_uploads_dir().joinpath(*parts)
 
+
+_SAFE_COMPONENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def safe_path_component(value: Optional[str], fallback: str = "UNKNOWN") -> str:
+    """Return a filesystem-safe single path component.
+
+    This prevents path traversal (e.g. '../') and removes path separators.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return fallback
+
+    # Replace spaces and drop any remaining unsafe characters.
+    cleaned = raw.replace(" ", "_")
+    cleaned = cleaned.replace("/", "_").replace("\\", "_")
+    cleaned = _SAFE_COMPONENT_RE.sub("_", cleaned)
+    cleaned = cleaned.strip("._")
+    cleaned = cleaned.replace("..", "_")
+
+    if not cleaned or cleaned in {".", ".."}:
+        return fallback
+    return cleaned
+
+
+def safe_resolve_upload_path(stored_path: str) -> Path:
+    """Resolve a stored path (typically starting with 'uploads/...') to an absolute path.
+
+    Raises ValueError if the resolved path would escape the uploads directory.
+    """
+    if not stored_path:
+        raise ValueError("Empty path")
+
+    normalized = str(stored_path).replace("\\", "/")
+    idx = normalized.lower().find("uploads/")
+    rel = normalized[idx + len("uploads/"):] if idx >= 0 else normalized.lstrip("/")
+    rel_parts = [p for p in rel.split("/") if p and p not in {".", ".."}]
+
+    uploads_root = get_uploads_dir().resolve()
+    candidate = uploads_root.joinpath(*rel_parts).resolve()
+    try:
+        candidate.relative_to(uploads_root)
+    except Exception as e:
+        raise ValueError("Invalid upload path") from e
+    return candidate
+
 def ensure_upload_folders():
     uploads_abs("form_201").mkdir(parents=True, exist_ok=True)
     uploads_abs("bmi").mkdir(parents=True, exist_ok=True)
@@ -32,13 +79,15 @@ def ensure_upload_folders():
 
 def personnel_folder_name(first_name: str, last_name: str) -> str:
     # Use required format: FORM201_<First>_<Last>
-    name = f"{first_name}_{last_name}".replace(' ', '_')
-    return f"FORM201_{name}"
+    first = safe_path_component(first_name, "FIRST")
+    last = safe_path_component(last_name, "LAST")
+    return f"FORM201_{first}_{last}"
 
 def bmi_folder_name(first_name: str, last_name: str) -> str:
     # Use required format: BMI_<First>_<Last>
-    name = f"{first_name}_{last_name}".replace(' ', '_')
-    return f"BMI_{name}"
+    first = safe_path_component(first_name, "FIRST")
+    last = safe_path_component(last_name, "LAST")
+    return f"BMI_{first}_{last}"
 
 def save_upload_file(uploaded, dest_path: str) -> str:
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)

@@ -4,7 +4,7 @@ from app import models
 # Create all tables from models
 print("Initializing database tables from SQLAlchemy models...")
 Base.metadata.create_all(bind=engine)
-print("✓ Database tables created successfully!")
+print("SUCCESS: Database tables created successfully!")
 
 # Verify tables exist
 from sqlalchemy import inspect
@@ -20,6 +20,6 @@ if 'personnel' in tables:
     required_cols = ['status_custom', 'nup_rank', 'nup_entry_number', 'section', 'birthdate', 'religion']
     for col in required_cols:
         if col in columns:
-            print(f"  ✓ {col}")
+            print(f"  OK: {col}")
         else:
-            print(f"  ✗ MISSING: {col}")
+            print(f"  MISSING: {col}")

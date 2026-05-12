@@ -40,8 +40,9 @@ export default function BMIMonitor(){
   const [reportMonth, setReportMonth] = useState('');
   const [reportYear, setReportYear] = useState('');
   const [preparedBy, setPreparedBy] = useState('');
+  const [verifiedBy, setVerifiedBy] = useState('');
   const [notedBy, setNotedBy] = useState('');
-  const [reportType] = useState('pdf');
+   const [reportType, setReportType] = useState('pdf');
   const [reportFileName, setReportFileName] = useState('bmi_report');
 
   // BMI History state
@@ -177,7 +178,7 @@ export default function BMIMonitor(){
     const parts = (record.name || '').trim().split(/\s+/).filter(Boolean);
     const first = parts[0] || '';
     const last = parts.length > 1 ? parts[parts.length - 1] : '';
-    const mi = parts.length > 2 ? parts.slice(1, parts.length - 1).join(' ') : '';
+    // const mi = parts.length > 2 ? parts.slice(1, parts.length - 1).join(' ') : ''; // Not used
     setUpdateForm({
       rank: record.rank || '',
       first_name: first,
@@ -271,7 +272,7 @@ export default function BMIMonitor(){
   const filteredRecords = records.filter(r => {
     let ok = true;
     if (unitFilter !== 'All Units') {
-      ok = ok && r.unit === unitFilter;
+      ok = ok && ((r.unit || '').toUpperCase() === (unitFilter || '').toUpperCase());
     }
     if (r.date_taken && (monthFilter !== 'All Months' || yearFilter !== 'All Years')) {
       const d = new Date(r.date_taken);
@@ -306,7 +307,7 @@ export default function BMIMonitor(){
     setHistoryError('');
     setDateRecord(null);
     setSelectedDate('');
-    
+
     if (personnelId) {
       setSelectedPersonnelId(personnelId);
       loadHistoryById(personnelId);
@@ -316,6 +317,8 @@ export default function BMIMonitor(){
       setHistoryRecords([]);
     }
   }
+
+
 
   async function loadHistoryById(personnelId) {
     if (!personnelId) return;
@@ -479,7 +482,15 @@ export default function BMIMonitor(){
               <i className="bi bi-clock-history me-1" />
               View History
             </button>
-            <button className="btn btn-outline-secondary btn-sm me-2" onClick={()=>setShowReportModal(true)}>
+            <button
+              className="btn btn-outline-secondary btn-sm me-2"
+              onClick={() => {
+                const now = new Date();
+                setReportMonth(String(now.getMonth() + 1));
+                setReportYear(String(now.getFullYear()));
+                setShowReportModal(true);
+              }}
+            >
               <i className="bi bi-file-earmark-text me-1" />
               Generate Report
             </button>
@@ -538,14 +549,11 @@ export default function BMIMonitor(){
                     <td>{r.date_taken ? new Date(r.date_taken).toLocaleDateString(): ''}</td>
                     <td>
                       <div className="btn-group btn-group-sm">
-                        <button className="btn btn-outline-info" onClick={() => openHistoryModal(r.personnel_id)} title="View BMI History">
+                        <button className="btn btn-outline-info" onClick={() => openHistoryModal(r.id)} title="View BMI History">
                           <i className="bi bi-clock-history" />
                         </button>
                         <button className="btn btn-outline-warning" onClick={() => openUpdate(r)} title="Update BMI Record">
                           <i className="bi bi-pencil" />
-                        </button>
-                        <button className="btn btn-outline-primary" onClick={()=>viewSingleResult(r)} title="View BMI Result PDF">
-                          <i className="bi bi-eye" />
                         </button>
                         <button className="btn btn-outline-danger" onClick={() => deleteBMIRecord(r)} title="Delete BMI Record">
                           <i className="bi bi-trash" />
@@ -799,7 +807,6 @@ export default function BMIMonitor(){
                     <div className="mb-2">
                       <label>Month</label>
                       <select className="form-select" value={reportMonth} onChange={e=>setReportMonth(e.target.value)}>
-                        <option value="">All Months</option>
                         {monthOptions.slice(1).map((m,i)=> <option key={m} value={i+1}>{m}</option>)}
                       </select>
                     </div>
@@ -807,18 +814,28 @@ export default function BMIMonitor(){
                     <div className="mb-2">
                       <label>Year</label>
                       <select className="form-select" value={reportYear} onChange={e=>setReportYear(e.target.value)}>
-                        <option value="">All Years</option>
-                        {[...new Set(records.filter(r=>r.date_taken).map(r=> new Date(r.date_taken).getFullYear()))].sort().map(y=> <option key={y} value={y}>{y}</option>)}
+                        {[...new Set([
+                          ...records.filter(r=>r.date_taken).map(r=> new Date(r.date_taken).getFullYear()),
+                          new Date().getFullYear()
+                        ])].sort().map(y=> <option key={y} value={y}>{y}</option>)}
                       </select>
                     </div>
 
-                    <div className="mb-2">
-                      <label>Unit (Report Scope)</label>
-                      <select className="form-select" value={unitFilter} onChange={e=>setUnitFilter(e.target.value)}>
-                        <option>All Units</option>
-                        {UNITS.map(u => <option key={u}>{u}</option>)}
-                      </select>
-                    </div>
+                     <div className="mb-2">
+                       <label>Unit (Report Scope)</label>
+                       <select className="form-select" value={unitFilter} onChange={e=>setUnitFilter(e.target.value)}>
+                         <option>All Units</option>
+                         {UNITS.map(u => <option key={u}>{u}</option>)}
+                       </select>
+                     </div>
+
+                     <div className="mb-2">
+                       <label>Report Format</label>
+                       <select className="form-select" value={reportType} onChange={e=>setReportType(e.target.value)}>
+                         <option value="pdf">PDF Report</option>
+                         <option value="excel">Excel Report</option>
+                       </select>
+                     </div>
                   </div>
 
                   <div className="col-md-6">
@@ -830,7 +847,7 @@ export default function BMIMonitor(){
 
                     <div className="mb-2">
                       <label>Verified Correct By</label>
-                      <input className="form-control mb-1" placeholder="Name" value={''} onChange={()=>{}} />
+                      <input className="form-control mb-1" placeholder="Name" value={verifiedBy} onChange={e=>setVerifiedBy(e.target.value)} />
                       <input className="form-control" placeholder="Title (optional)" />
                     </div>
 
@@ -850,11 +867,16 @@ export default function BMIMonitor(){
                       alert('File name is required before generating the report.');
                       return;
                     }
+                    if (!reportMonth || !reportYear) {
+                      alert('Month and Year are required before generating the report.');
+                      return;
+                    }
                     const fd = new FormData();
-                    if (reportMonth) fd.append('month', reportMonth);
-                    if (reportYear) fd.append('year', reportYear);
+                    fd.append('month', reportMonth);
+                    fd.append('year', reportYear);
                     if (unitFilter && unitFilter!=='All Units') fd.append('unit', unitFilter);
                     fd.append('prepared_by', preparedBy);
+                    fd.append('verified_by', verifiedBy);
                     fd.append('noted_by', notedBy);
                     fd.append('report_type', reportType);
                     fd.append('file_name', reportFileName.trim());

@@ -246,6 +246,24 @@ export default function Form201(){
     };
   }
 
+  function toDateInputValue(value){
+    if (!value) return '';
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+      const m = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (m && m[1]) return m[1];
+      const d = new Date(trimmed);
+      if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+      return '';
+    }
+    try {
+      const d = new Date(value);
+      if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    } catch (e) {}
+    return '';
+  }
+
   const docFiles = { pds, appointment, promotion, designation, reassignment, diploma, eligibility, iper, saln, pft, rca };
   const setDocFiles = {
     pds: setPds,
@@ -357,12 +375,12 @@ export default function Form201(){
         nup_rank:p.nup_rank||'',
         nup_entry_number:p.nup_entry_number||'',
         qlf:p.qlf||'',
-        date_of_reassignment:p.date_of_reassignment||'',
+        date_of_reassignment:toDateInputValue(p.date_of_reassignment),
         designation:p.designation||'',
-        date_of_designation:p.date_of_designation||'',
+        date_of_designation:toDateInputValue(p.date_of_designation),
         highest_eligibility:p.highest_eligibility||'',
         contact_number:p.contact_number||'',
-        birthdate:p.birthdate||'',
+        birthdate:toDateInputValue(p.birthdate),
         religion:p.religion||'',
         section:p.section||''
       });

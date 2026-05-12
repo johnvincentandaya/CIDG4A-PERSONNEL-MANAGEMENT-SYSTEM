@@ -1,10 +1,18 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from typing import Dict, List, Optional, Tuple
-from sqlalchemy import text, extract
+from sqlalchemy import text, extract, func
 from sqlalchemy.orm import Session
 from .. import models, schemas
+from ..models import BMIHistory
 from ..database import SessionLocal
-from ..utils import ensure_upload_folders, bmi_folder_name, uploads_abs, uploads_rel
+from ..utils import (
+    ensure_upload_folders,
+    bmi_folder_name,
+    safe_path_component,
+    safe_resolve_upload_path,
+    uploads_abs,
+    uploads_rel,
+)
 import os
 from datetime import datetime
 import calendar
@@ -18,133 +26,8 @@ from openpyxl import Workbook
 
 router = APIRouter()
 
-# Run migrations on module load
-def run_migrations():
-    """Add missing columns to existing tables for migration."""
-    from sqlalchemy import create_engine, text
-    from pathlib import Path
-    import os
-    
-    # Get the database path
-    base_dir = Path(__file__).resolve().parent.parent.parent  # api -> app -> backend
-    db_path = base_dir / "cidg_dev.db"
-    
-    if not db_path.exists():
-        return
-    
-    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
-    
-    with engine.connect() as conn:
-        # Check if bmi_records table exists and add missing columns
-        try:
-            conn.execute(text("""
-                ALTER TABLE bmi_records ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            """))
-            conn.commit()
-        except Exception:
-            pass  # Column might already exist
-        
-        try:
-            conn.execute(text("""
-                ALTER TABLE bmi_records ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            """))
-            conn.commit()
-        except Exception:
-            pass  # Column might already exist
-        
-        try:
-            conn.execute(text("""
-                ALTER TABLE bmi_records ADD COLUMN personnel_id INTEGER REFERENCES personnel(id)
-            """))
-            conn.commit()
-        except Exception:
-            pass  # Column might already exist
-        
-        # NEW: Add is_latest column for tracking latest BMI record per personnel
-        try:
-            conn.execute(text("""
-                ALTER TABLE bmi_records ADD COLUMN is_latest BOOLEAN DEFAULT 1
-            """))
-            conn.commit()
-        except Exception:
-            pass  # Column might already exist
-        
-        # Ensure indexes exist for performance
-        try:
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_bmi_personnel_id ON bmi_records(personnel_id)
-            """))
-            conn.commit()
-        except Exception:
-            pass
-        
-        try:
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_bmi_date_taken ON bmi_records(date_taken)
-            """))
-            conn.commit()
-        except Exception:
-            pass
-        
-        # NEW: Create index for is_latest flag
-        try:
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_bmi_is_latest ON bmi_records(is_latest)
-            """))
-            conn.commit()
-        except Exception:
-            pass
-        
-        # NEW: Initialize is_latest for existing records
-        # For each unique name, mark only the latest record (by date_taken) as is_latest=True
-        # and all others as is_latest=False
-        try:
-            # First, set all to False
-            conn.execute(text("""
-                UPDATE bmi_records SET is_latest = 0
-            """))
-            conn.commit()
-            
-            # Then, for each unique name, set the record with max date_taken to True
-            # This subquery finds the max date per name
-            conn.execute(text("""
-                UPDATE bmi_records 
-                SET is_latest = 1 
-                WHERE id IN (
-                    SELECT id FROM bmi_records b1
-                    WHERE date_taken = (
-                        SELECT MAX(date_taken) FROM bmi_records b2 
-                        WHERE b2.name = b1.name
-                    )
-                )
-            """))
-            conn.commit()
-        except Exception as e:
-            print(f"Warning: Could not initialize is_latest: {e}")
-            pass
-        # NEW: Add status columns for BMI records
-        try:
-            conn.execute(text("""
-                ALTER TABLE bmi_records ADD COLUMN status TEXT DEFAULT 'Active'
-            """))
-            conn.commit()
-        except Exception:
-            pass
-
-        try:
-            conn.execute(text("""
-                ALTER TABLE bmi_records ADD COLUMN status_custom TEXT
-            """))
-            conn.commit()
-        except Exception:
-            pass
-    
-    engine.dispose()
-
-try:
-    run_migrations()
-except Exception:
-    pass  # Migration errors are handled gracefully
+# NOTE: Database migrations are executed on application startup
+# (see `app.database.migrate_db()` called from `backend/main.py`).
 
 PNP_BMI_AGE_TABLE = [
     {"group": "29 years old and below", "min_age": 0, "max_age": 29, "acceptable_min": 18.5, "acceptable_max": 24.9},
@@ -268,6 +151,70 @@ def parse_date_taken(date_taken: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def unit_key(raw_unit: Optional[str]) -> str:
+    u = (raw_unit or "").strip().upper()
+    if u in ("RHQ", "RFU4A HQS", "REGIONAL OFFICE", "HEADQUARTERS"):
+        return "RHQ"
+    if "CAV" in u:
+        return "CAVITE"
+    if "LAG" in u:
+        return "LAGUNA"
+    if "BAT" in u:
+        return "BATANGAS"
+    if "RIZ" in u:
+        return "RIZAL"
+    if "QZN" in u or "QUE" in u:
+        return "QUEZON"
+    return u
+
+
+def unit_variants(raw_unit: Optional[str]) -> List[str]:
+    key = unit_key(raw_unit)
+    variants = {
+        "RHQ": ["RHQ", "RFU4A HQS", "REGIONAL OFFICE", "HEADQUARTERS"],
+        "CAVITE": ["CAVITE", "CAVITE PFU", "CAV PFU"],
+        "LAGUNA": ["LAGUNA", "LAGUNA PFU", "LAG PFU"],
+        "BATANGAS": ["BATANGAS", "BATANGAS PFU", "BATS PFU"],
+        "RIZAL": ["RIZAL", "RIZAL PFU"],
+        "QUEZON": ["QUEZON", "QUEZON PFU", "QZN PFU"],
+    }
+    return variants.get(key, [key] if key else [])
+
+
+def resolve_personnel_id(
+    db: Session,
+    personnel_id: Optional[int],
+    first_name: Optional[str],
+    last_name: Optional[str],
+    suffix: Optional[str],
+    unit: Optional[str],
+) -> Optional[int]:
+    if personnel_id:
+        person = db.query(models.Personnel).filter(models.Personnel.id == personnel_id).first()
+        if person:
+            return person.id
+
+    first = (first_name or "").strip().upper()
+    last = (last_name or "").strip().upper()
+    if not first or not last:
+        return None
+
+    q = db.query(models.Personnel).filter(
+        func.upper(models.Personnel.first_name) == first,
+        func.upper(models.Personnel.last_name) == last,
+    )
+    suf = (suffix or "").strip().upper()
+    if suf:
+        q = q.filter(func.upper(models.Personnel.suffix) == suf)
+
+    unit_opts = unit_variants(unit)
+    if unit_opts:
+        q = q.filter(func.upper(models.Personnel.unit).in_(unit_opts))
+
+    person = q.order_by(models.Personnel.id.asc()).first()
+    return person.id if person else None
+
+
 def safe_filename(raw_name: str, fallback: str) -> str:
     candidate = (raw_name or "").strip()
     if not candidate:
@@ -280,13 +227,10 @@ def safe_filename(raw_name: str, fallback: str) -> str:
 def resolve_upload_path(stored_path: Optional[str]) -> Optional[str]:
     if not stored_path:
         return None
-    normalized = str(stored_path).replace("\\", "/")
-    candidate = Path(normalized)
-    if candidate.exists():
-        return str(candidate)
-    idx = normalized.lower().find("uploads/")
-    relative_from_uploads = normalized[idx + len("uploads/"):] if idx >= 0 else normalized.lstrip("/")
-    return str(uploads_abs(*relative_from_uploads.split("/")))
+    try:
+        return str(safe_resolve_upload_path(stored_path))
+    except Exception:
+        return None
 
 
 def build_month_columns(reference_date: datetime) -> List[Tuple[int, int]]:
@@ -350,14 +294,15 @@ def draw_record_pdf_page(
     db: Session,
     prepared_by: str = "",
     noted_by: str = "",
+    report_month: int = None,
+    report_year: int = None,
 ) -> None:
     """
-    Rebuilt layout for Individual BMI Monitoring Form.
-    Strict structured layout: header, photos (L), personnel details (R),
-    classification + intervention, monthly monitoring table, signatures.
+    Optimized layout for Individual BMI Monitoring Form.
+    Maximizes page space utilization with balanced content distribution.
     """
     width, height = landscape(letter)
-    M = 18
+    M = 12  # Reduced margins for more space
     content_x = M
     content_w = width - 2 * M
 
@@ -370,21 +315,22 @@ def draw_record_pdf_page(
     pnp_classification = classify_pnp_bmi(bmi_value, rec.age or 0)
     who_classification = classify_who_bmi(bmi_value)
     metrics = compute_weight_metrics(rec.height_cm or 0, rec.weight_kg or 0, rec.age or 0)
+    age_row = get_pnp_age_row(rec.age or 0)
     intervention = INTERVENTION_PACKAGE_MAP.get(pnp_classification, {"package": "", "duration": "", "recommendation": ""})
 
     # Starting Y below title
     y_top = height - M - 28
 
     # --- Upper section: Photos (left) and Personnel Details (right) ---
-    photo_section_w = content_w * 0.48
-    details_section_w = content_w - photo_section_w - 10
+    photo_section_w = content_w * 0.33  # Slightly narrower to allow taller, more vertical photos
+    details_section_w = content_w - photo_section_w - 8  # Adjusted gap
     photo_x = content_x
-    details_x = content_x + photo_section_w + 10
+    details_x = content_x + photo_section_w + 8
 
-    # Photos layout
-    photo_h = 72
-    photo_label_h = 10
-    gap_between_photos = 6
+    # Photos layout - taller, vertical containers for whole-body images
+    photo_h = 240
+    photo_label_h = 8
+    gap_between_photos = 4
     photo_w = (photo_section_w - (2 * gap_between_photos)) / 3
     photos_top = y_top
     photos_bottom = photos_top - photo_h - photo_label_h
@@ -413,23 +359,24 @@ def draw_record_pdf_page(
         c.drawCentredString(ix + photo_w / 2, iy - 8, label)
 
     # Personnel details table (right)
+    # Optimized field list - combined some fields to save space
     details_fields = [
         ("RANK/NAME", f"{(rec.rank or '')} {(rec.name or '')}".strip()),
         ("UNIT", rec.unit or ""),
-        ("AGE", f"{rec.age or ''}"),
+        ("AGE/GENDER", f"{rec.age or ''} / {rec.sex or ''}"),
         ("HEIGHT", f"{metrics.get('height_m', 0):.2f} m"),
         ("WEIGHT", f"{(rec.weight_kg or 0):.1f} kg"),
-        ("WAIST", f"{(rec.waist_cm or 0):.1f} cm"),
-        ("HIP", f"{(rec.hip_cm or 0):.1f} cm"),
-        ("WRIST", f"{(rec.wrist_cm or 0):.1f} cm"),
-        ("GENDER", rec.sex or ""),
+        ("WAIST/HIP/WRIST", f"{(rec.waist_cm or 0):.1f} / {(rec.hip_cm or 0):.1f} / {(rec.wrist_cm or 0):.1f} cm"),
         ("DATE TAKEN", rec.date_taken.strftime("%Y-%m-%d") if rec.date_taken else ""),
         ("BMI RESULT", f"{bmi_value:.2f}"),
         ("NORMAL WT RANGE", f"{metrics['normal_min_weight']:.1f} - {metrics['normal_max_weight']:.1f} kg"),
         ("WEIGHT TO LOSE", f"{metrics['weight_to_lose']:.1f} kg"),
+        ("AGE GROUP", age_row["group"]),
+        ("ACCEPTABLE BMI", f"{age_row['acceptable_min']:.1f} - {age_row['acceptable_max']:.1f}"),
     ]
 
-    details_row_h = 13
+    # Expand row height so the details block aligns with the taller photos.
+    details_row_h = 20
     label_w = details_section_w * 0.45
     cur_y = y_top
     c.setFont("Helvetica-Bold", 9)
@@ -459,7 +406,7 @@ def draw_record_pdf_page(
     interv_area_w = content_w - class_area_w - mid_gap
     class_x = content_x
     class_y = upper_bottom - 12
-    class_h = 60
+    class_h = 150
     interv_x = class_x + class_area_w + mid_gap
     # classification box
     c.setStrokeColor(colors.black)
@@ -485,18 +432,73 @@ def draw_record_pdf_page(
     c.drawString(interv_x + 6, class_y - 40, f"Duration: {intervention.get('duration','')}")
     c.drawString(interv_x + 6, class_y - 52, f"Recommendation: {intervention.get('recommendation','')}")
 
-    # --- Monthly weight monitoring table ---
-    table_top = class_y - class_h - 14
+    # --- Monthly weight monitoring table - optimized spacing ---
+    table_top = class_y - class_h - 10  # Reduced gap
     table_x = content_x
     table_w = content_w
     col_w = table_w / TOTAL_MONTH_COLUMNS
     year_row_h = 16
-    month_row_h = 14
-    weight_row_h = 14
+    month_row_h = 16
+    weight_row_h = 16
     table_h = year_row_h + month_row_h + weight_row_h
 
-    months = build_month_columns(rec.date_taken or datetime.utcnow())
-    monthly_weight_map = load_monthly_weight_map(db, rec)
+    # Use report month/year for timeline, or fallback to record date
+    timeline_month = report_month or (rec.date_taken.month if rec.date_taken else datetime.utcnow().month)
+    timeline_year = report_year or (rec.date_taken.year if rec.date_taken else datetime.utcnow().year)
+
+    # Get history data for dynamic timeline
+    history_data = None
+    timeline_personnel_id = rec.personnel_id
+    if not timeline_personnel_id and rec.name:
+        name_parts = [p for p in (rec.name or '').strip().upper().split() if p]
+        first_guess = name_parts[0] if name_parts else None
+        last_guess = name_parts[-1] if len(name_parts) > 1 else None
+        suffix_guess = None
+        if name_parts and name_parts[-1] in ('JR', 'SR', 'II', 'III', 'IV', 'V'):
+            suffix_guess = name_parts[-1]
+            if len(name_parts) > 2:
+                last_guess = name_parts[-2]
+
+        timeline_personnel_id = resolve_personnel_id(
+            db,
+            None,
+            first_guess,
+            last_guess,
+            suffix_guess,
+            rec.unit,
+        )
+
+    if timeline_personnel_id:
+        try:
+            history_response = get_bmi_history_data(timeline_personnel_id, timeline_month, timeline_year, db)
+            history_data = history_response
+        except Exception:
+            pass
+
+    # Build months for the timeline
+    months = []
+    for i in range(13, -1, -1):  # 14 months backward from report month
+        target_month = timeline_month - i
+        target_year = timeline_year
+
+        while target_month <= 0:
+            target_month += 12
+            target_year -= 1
+        while target_month > 12:
+            target_month -= 12
+            target_year += 1
+
+        months.append((target_year, target_month))
+
+    # Create weight map from history data
+    monthly_weight_map = {}
+    if history_data and history_data.get("monthly_data"):
+        for month_data in history_data["monthly_data"]:
+            key = (month_data["year"], month_data["month"])
+            monthly_weight_map[key] = month_data.get("weight")
+    else:
+        # Fallback to old method
+        monthly_weight_map = load_monthly_weight_map(db, rec)
 
     # Draw YEAR row with grouped year spans
     # Group consecutive months by year
@@ -513,75 +515,46 @@ def draw_record_pdf_page(
 
     # Year row
     y_year = table_top
-    c.setFont("Helvetica-Bold", 8)
+    c.setFont("Helvetica-Bold", 7)  # Smaller font
     for year_val, start_col, span in groups:
         gx = table_x + start_col * col_w
         gw = span * col_w
         c.rect(gx, y_year - year_row_h, gw, year_row_h, stroke=1, fill=0)
-        c.drawCentredString(gx + gw / 2, y_year - year_row_h + 4, str(year_val))
+        c.drawCentredString(gx + gw / 2, y_year - year_row_h + 3, str(year_val))
 
     # Month row
     y_month = y_year - year_row_h
-    c.setFont("Helvetica", 8)
+    c.setFont("Helvetica", 6)  # Smaller font
     for idx, (yr, mo) in enumerate(months):
         mx = table_x + idx * col_w
         c.rect(mx, y_month - month_row_h, col_w, month_row_h, stroke=1, fill=0)
-        c.drawCentredString(mx + col_w / 2, y_month - month_row_h + 4, calendar.month_abbr[mo])
+        c.drawCentredString(mx + col_w / 2, y_month - month_row_h + 3, calendar.month_abbr[mo])
 
     # Weight row
     y_weight = y_month - month_row_h
-    c.setFont("Helvetica", 8)
+    c.setFont("Helvetica", 6)  # Smaller font
     for idx, (yr, mo) in enumerate(months):
         wx = table_x + idx * col_w
         c.rect(wx, y_weight - weight_row_h, col_w, weight_row_h, stroke=1, fill=0)
         wval = monthly_weight_map.get((yr, mo), None)
-        display = f"{wval:.1f}" if (wval is not None and wval != "") else "-"
-        c.drawCentredString(wx + col_w / 2, y_weight - weight_row_h + 4, display)
+        display = f"{wval:.1f}" if (wval is not None and wval != "") else ""
+        c.drawCentredString(wx + col_w / 2, y_weight - weight_row_h + 3, display)
 
     # Label for table
     c.setFont("Helvetica-Bold", 9)
     c.drawString(table_x, y_year + 6, "MONTHLY WEIGHT MONITORING")
 
-    # --- Signatures ---
-    sig_y = M + 20
-    sig_block_w = (content_w - 24) / 3
-    left_x = content_x
-    center_x = content_x + sig_block_w + 12
-    right_x = content_x + (sig_block_w + 12) * 2
-    line_w = 140
 
-    # Certified Correct (left)
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(left_x, sig_y + 30, "Certified Correct")
-    c.line(left_x, sig_y + 12, left_x + line_w, sig_y + 12)
-    c.setFont("Helvetica", 7)
-    c.drawCentredString(left_x + line_w / 2, sig_y, "Signature over Printed Name")
-
-    # Prepared by (center)
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(center_x, sig_y + 30, "Prepared by")
-    c.line(center_x, sig_y + 12, center_x + line_w, sig_y + 12)
-    c.setFont("Helvetica", 7)
-    if prepared_by:
-        c.drawCentredString(center_x + line_w / 2, sig_y - 2, prepared_by)
-    else:
-        c.drawCentredString(center_x + line_w / 2, sig_y - 2, "")
-
-    # Noted by (right)
-    c.setFont("Helvetica-Bold", 8)
-    c.drawString(right_x, sig_y + 30, "Noted by")
-    c.line(right_x, sig_y + 12, right_x + line_w, sig_y + 12)
-    c.setFont("Helvetica", 7)
-    if noted_by:
-        c.drawCentredString(right_x + line_w / 2, sig_y - 2, noted_by)
-    else:
-        c.drawCentredString(right_x + line_w / 2, sig_y - 2, "")
 
 
 @router.post('/', response_model=schemas.BMISchema)
 async def create_bmi(
     rank: str = Form(...),
     name: str = Form(...),
+    first_name: Optional[str] = Form(None),
+    last_name: Optional[str] = Form(None),
+    suffix: Optional[str] = Form(None),
+    personnel_id: Optional[int] = Form(None),
     unit: str = Form(...),
     age: int = Form(...),
     sex: str = Form(...),
@@ -604,16 +577,24 @@ async def create_bmi(
     name = name.upper() if isinstance(name, str) else name
     unit = unit.upper() if isinstance(unit, str) else unit
     sex = sex.upper() if isinstance(sex, str) else sex
+    first_name = first_name.upper() if isinstance(first_name, str) else first_name
+    last_name = last_name.upper() if isinstance(last_name, str) else last_name
+    suffix = suffix.upper() if isinstance(suffix, str) else suffix
 
-    # parse name to first and last for file naming (First_Last)
+    resolved_personnel_id = resolve_personnel_id(db, personnel_id, first_name, last_name, suffix, unit)
+
+    # Use explicit name parts when provided (more reliable than parsing full name)
     parts = name.strip().split() if name else []
-    first_name = parts[0] if parts else ''
-    last_name = parts[-1] if len(parts) > 1 else ''
-    unit_folder = unit.upper()
-    folder_abs = uploads_abs('bmi', unit_folder, bmi_folder_name(first_name, last_name))
-    folder_rel = uploads_rel('bmi', unit_folder, bmi_folder_name(first_name, last_name))
+    first_name_for_path = (first_name or '').strip() or (parts[0] if parts else '')
+    last_name_for_path = (last_name or '').strip() or (parts[-1] if len(parts) > 1 else '')
+
+    safe_unit_folder = safe_path_component(unit, 'UNIT').upper()
+    safe_first = safe_path_component(first_name_for_path, 'FIRST').upper()
+    safe_last = safe_path_component(last_name_for_path, 'LAST').upper()
+    folder_abs = uploads_abs('bmi', safe_unit_folder, bmi_folder_name(safe_first, safe_last))
+    folder_rel = uploads_rel('bmi', safe_unit_folder, bmi_folder_name(safe_first, safe_last))
     os.makedirs(folder_abs, exist_ok=True)
-    base_name = f"{first_name}_{last_name}" if last_name else first_name
+    base_name = f"{safe_first}_{safe_last}" if safe_last else safe_first
     front_name = f"BMI_{base_name}_front.jpg"
     left_name = f"BMI_{base_name}_left.jpg"
     right_name = f"BMI_{base_name}_right.jpg"
@@ -628,26 +609,15 @@ async def create_bmi(
     # Determine the effective date (today if not provided)
     effective_date = parsed_date_taken or datetime.utcnow()
 
-    # VALIDATION: Do not allow duplicate BMI entries for the same person for the same month
-    existing_same_month = db.query(models.BMIRecord).filter(
+    # Mark any previously-latest records for this personnel/name as NOT latest
+    db.query(models.BMIRecord).filter(
         models.BMIRecord.name.ilike(name),
-        extract('month', models.BMIRecord.date_taken) == effective_date.month,
-        extract('year', models.BMIRecord.date_taken) == effective_date.year
-    ).first()
-    if existing_same_month:
-        raise HTTPException(status_code=400, detail="A BMI record already exists for this person for the selected month. You can edit the existing record instead.")
-
-    # NEW: Find and mark existing latest records for this personnel as NOT latest
-    # First try to find by name (case-insensitive match)
-    existing_latest = db.query(models.BMIRecord).filter(
-        models.BMIRecord.name.ilike(name)
-    ).order_by(models.BMIRecord.date_taken.desc()).first()
-    
-    if existing_latest:
-        existing_latest.is_latest = False
-        db.commit()
+        models.BMIRecord.is_latest == True,
+    ).update({models.BMIRecord.is_latest: False}, synchronize_session=False)
+    db.commit()
 
     record = models.BMIRecord(
+        personnel_id=resolved_personnel_id,
         rank=rank, name=name, unit=unit, age=age, sex=sex,
         height_cm=height_cm, weight_kg=weight_kg, waist_cm=waist_cm,
         hip_cm=hip_cm, wrist_cm=wrist_cm, bmi=bmi_value, classification=pnp_classification,
@@ -658,11 +628,42 @@ async def create_bmi(
         photo_right=f"{folder_rel}/{right_name}".replace("\\","/"),
         status=status,
         status_custom=status_custom,
-        is_latest=True,  # NEW: Mark as latest
+        is_latest=True,  # Mark as latest
     )
     db.add(record)
     db.commit()
     db.refresh(record)
+
+    # Upsert BMI history snapshot for the month (used by the 14-month PDF timeline)
+    if record.personnel_id:
+        history = db.query(BMIHistory).filter(
+            BMIHistory.personnel_id == record.personnel_id,
+            BMIHistory.month == effective_date.month,
+            BMIHistory.year == effective_date.year,
+        ).first()
+        if history:
+            history.weight = float(weight_kg)
+            history.bmi_result = float(bmi_value)
+            history.bmi_classification = pnp_classification
+            history.waist = waist_cm
+            history.hip = hip_cm
+            history.wrist = wrist_cm
+            history.created_at = effective_date
+        else:
+            history = BMIHistory(
+                personnel_id=record.personnel_id,
+                month=effective_date.month,
+                year=effective_date.year,
+                weight=float(weight_kg),
+                bmi_result=float(bmi_value),
+                bmi_classification=pnp_classification,
+                waist=waist_cm,
+                hip=hip_cm,
+                wrist=wrist_cm,
+                created_at=effective_date,
+            )
+            db.add(history)
+        db.commit()
 
     # save photos after record exists
     with open(front_path_abs,'wb') as f:
@@ -681,21 +682,29 @@ def bmi_report(
     year: Optional[int] = Form(None),
     unit: Optional[str] = Form(None),
     prepared_by: str = Form(''),
+    verified_by: str = Form(''),
     noted_by: str = Form(''),
     status: Optional[str] = Form(None),
     report_type: str = Form('pdf'),
     file_name: str = Form('bmi_report'),
     db: Session = Depends(get_db),
 ):
+    # Store report month/year for PDF generation
+    report_month = month
+    report_year = year
+
+    if not month or not year:
+        raise HTTPException(status_code=400, detail='Month and Year are required for BMI reports.')
+
     # fetch records matching filters
     q = db.query(models.BMIRecord)
     if unit and unit != 'All Units':
-        q = q.filter(models.BMIRecord.unit == unit)
-    if month and year:
-        # filter by date_taken month/year
-        from sqlalchemy import extract
-        q = q.filter(extract('month', models.BMIRecord.date_taken) == month, extract('year', models.BMIRecord.date_taken) == year)
-    records = q.order_by(models.BMIRecord.date_taken.desc()).all()
+        unit_opts = unit_variants(unit)
+        if unit_opts:
+            q = q.filter(func.upper(models.BMIRecord.unit).in_(unit_opts))
+    # filter by date_taken month/year
+    q = q.filter(extract('month', models.BMIRecord.date_taken) == month, extract('year', models.BMIRecord.date_taken) == year)
+    records = q.order_by(models.BMIRecord.date_taken.desc(), models.BMIRecord.id.desc()).all()
 
     # Filter BMI records based on status parameters
     filtered_records = []
@@ -718,16 +727,43 @@ def bmi_report(
     records = filtered_records
     safe_base_name = safe_filename(file_name, 'bmi_report')
 
+    # De-dupe: if multiple BMI entries exist within the selected month,
+    # keep only the MOST RECENT entry per personnel.
+    seen = set()
+    deduped = []
+    for rec in records:
+        key = rec.personnel_id or ((rec.name or '').strip().upper() or rec.id)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(rec)
+
+    records = deduped
+
+    if not records:
+        raise HTTPException(status_code=404, detail='No BMI records found for the selected Month/Year/Unit filters.')
+
     if report_type.lower() == 'excel':
         # reuse existing excel generator logic
         ids = [r.id for r in records]
-        return generate_excel(records=ids, prepared_by=prepared_by, noted_by=noted_by, file_name=safe_base_name, db=db)
+        return generate_excel(
+            records=ids,
+            prepared_by=prepared_by,
+            verified_by=verified_by,
+            noted_by=noted_by,
+            file_name=safe_base_name,
+            report_month=month,
+            report_year=year,
+            report_unit=(unit or 'All Units'),
+            db=db,
+        )
 
     # For PDF: create combined multi-page PDF
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape(letter))
     for rec in records:
-        draw_record_pdf_page(c, rec, db=db, prepared_by=prepared_by, noted_by=noted_by)
+        draw_record_pdf_page(c, rec, db=db, prepared_by=prepared_by, noted_by=noted_by,
+                           report_month=report_month, report_year=report_year)
         c.showPage()
 
     c.save()
@@ -740,14 +776,14 @@ def bmi_report(
 
 
 @router.get('/{record_id}/pdf')
-def generate_bmi_pdf(record_id: int, file_name: Optional[str] = None, db: Session = Depends(get_db)):
+def generate_bmi_pdf(record_id: int, file_name: Optional[str] = None, report_month: Optional[int] = None, report_year: Optional[int] = None, db: Session = Depends(get_db)):
     rec = db.query(models.BMIRecord).filter(models.BMIRecord.id==record_id).first()
     if not rec:
         raise HTTPException(status_code=404, detail='BMI record not found')
 
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape(letter))
-    draw_record_pdf_page(c, rec, db=db)
+    draw_record_pdf_page(c, rec, db=db, report_month=report_month, report_year=report_year)
     c.showPage()
     c.save()
     buffer.seek(0)
@@ -763,65 +799,294 @@ def generate_bmi_pdf(record_id: int, file_name: Optional[str] = None, db: Sessio
 def generate_excel(
     records: List[int] = Form(...),
     prepared_by: str = Form(''),
+    verified_by: str = Form(''),
     noted_by: str = Form(''),
     file_name: str = Form('bmi_report'),
+    report_month: Optional[int] = Form(None),
+    report_year: Optional[int] = Form(None),
+    report_unit: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = 'BMI Report'
-    headers = [
-        'Rank',
-        'Surname',
-        'First Name',
-        'Middle Name',
-        'QLR',
-        'Age',
-        'Height in CM',
-        'Weight for the month',
-        'Waist Size in CM',
-        'Hip Size in CM',
-        'Wrist Size in CM',
-        'BMI Result',
-        'PNP BMI Classification',
-        'WHO BMI Classification',
-        'Weight to Lose',
-    ]
-    ws.append(headers)
+    from collections import defaultdict
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+    from openpyxl.worksheet.page import PageMargins
+
+    def _sheet_print_setup(ws, header_row: int) -> None:
+        ws.page_setup.orientation = 'landscape'
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.page_margins = PageMargins(left=0.25, right=0.25, top=0.5, bottom=0.5, header=0.3, footer=0.3)
+        ws.print_options.horizontalCentered = True
+        ws.sheet_view.showGridLines = False
+        ws.freeze_panes = ws[f"A{header_row + 1}"]
+        ws.print_title_rows = f"{header_row}:{header_row}"
+
+    def _auto_fit_columns(ws, max_col: int, min_width: int = 10, max_width: int = 40) -> None:
+        for col_idx in range(1, max_col + 1):
+            col_letter = get_column_letter(col_idx)
+            max_len = 0
+            for cell in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=1, max_row=ws.max_row):
+                for c in cell:
+                    if c.value is None:
+                        continue
+                    max_len = max(max_len, len(str(c.value)))
+            ws.column_dimensions[col_letter].width = min(max_width, max(min_width, max_len + 2))
+
+    def _apply_border(ws, min_row: int, max_row: int, min_col: int, max_col: int, border: Border) -> None:
+        for r in range(min_row, max_row + 1):
+            for c in range(min_col, max_col + 1):
+                ws.cell(row=r, column=c).border = border
+
+    def _write_report_header(ws, title: str, col_count: int, period_text: str, unit_text: str) -> None:
+        last_col = get_column_letter(col_count)
+        ws.merge_cells(f"A1:{last_col}1")
+        ws['A1'].value = title
+        ws['A1'].font = Font(name='Calibri', size=14, bold=True)
+        ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+        ws.row_dimensions[1].height = 22
+
+        ws.merge_cells(f"A2:{last_col}2")
+        ws['A2'].value = period_text
+        ws['A2'].font = Font(name='Calibri', size=11, bold=True)
+        ws['A2'].alignment = Alignment(horizontal='center', vertical='center')
+
+        ws.merge_cells(f"A3:{last_col}3")
+        ws['A3'].value = unit_text
+        ws['A3'].font = Font(name='Calibri', size=11, bold=True)
+        ws['A3'].alignment = Alignment(horizontal='center', vertical='center')
+
+        ws.append([])  # spacer row
+
+    # Fetch all records
+    recs = []
     for rid in records:
-        rec = db.query(models.BMIRecord).filter(models.BMIRecord.id==rid).first()
-        if not rec:
-            continue
-        # split name
-        parts = rec.name.split()
-        surname = parts[-1] if len(parts)>1 else ''
-        first = parts[0]
-        middle = ' '.join(parts[1:-1]) if len(parts)>2 else ''
+        rec = db.query(models.BMIRecord).filter(models.BMIRecord.id == rid).first()
+        if rec:
+            recs.append(rec)
+
+    wb = Workbook()
+
+    period_str = ""
+    if report_month and report_year:
+        try:
+            period_str = f"{calendar.month_name[int(report_month)]} {int(report_year)}"
+        except Exception:
+            period_str = f"{report_month} {report_year}"
+    unit_scope_str = (report_unit or 'All Units')
+
+    # Shared styles
+    thin_side = Side(style='thin', color='000000')
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+    header_fill = PatternFill(fill_type='solid', fgColor='F2F2F2')
+    header_font = Font(name='Calibri', size=11, bold=True)
+    body_font = Font(name='Calibri', size=11)
+    align_center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    align_left = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    align_right = Alignment(horizontal='right', vertical='center', wrap_text=True)
+
+    # RECAP Sheet
+    recap_ws = wb.active
+    recap_ws.title = 'RECAP'
+    recap_headers = ['Rank', 'Underweight', 'Normal', 'Overweight', 'Obese 1', 'Obese 2', 'Obese 3']
+    _write_report_header(
+        recap_ws,
+        title='BMI RECAP REPORT (BY RANK)',
+        col_count=len(recap_headers),
+        period_text=(f"Report Period: {period_str}" if period_str else 'Report Period: -'),
+        unit_text=f"Unit Scope: {unit_scope_str}",
+    )
+
+    header_row = recap_ws.max_row + 1
+    for col_idx, h in enumerate(recap_headers, 1):
+        cell = recap_ws.cell(row=header_row, column=col_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = align_center
+
+    # Compute rank counts for recap
+    rank_counts = defaultdict(lambda: defaultdict(int))
+    total_counts = defaultdict(int)
+
+    for rec in recs:
         bmi_value = compute_bmi(rec.weight_kg or 0, rec.height_cm or 0)
         pnp_classification = classify_pnp_bmi(bmi_value, rec.age or 0)
-        who_classification = classify_who_bmi(bmi_value)
-        metrics = compute_weight_metrics(rec.height_cm or 0, rec.weight_kg or 0, rec.age or 0)
-        row = [
-            rec.rank,
-            surname,
-            first,
-            middle,
-            '',
-            rec.age,
-            rec.height_cm,
-            rec.weight_kg,
-            rec.waist_cm,
-            rec.hip_cm,
-            rec.wrist_cm,
-            bmi_value,
-            pnp_classification,
-            who_classification,
-            metrics['weight_to_lose'],
-        ]
-        ws.append(row)
-    ws.append([])
-    ws.append(['Prepared by:', prepared_by])
-    ws.append(['Noted by:', noted_by])
+
+        # Map classifications to RECAP columns
+        cls_map = {
+            'Severely Underweight': 'Underweight',
+            'Underweight': 'Underweight',
+            'Normal': 'Normal',
+            'Acceptable BMI': 'Normal',
+            'Overweight': 'Overweight',
+            'Obese Class 1': 'Obese Class 1',
+            'Obese Class 2': 'Obese Class 2',
+            'Obese Class 3': 'Obese Class 3'
+        }
+        cls = cls_map.get(pnp_classification, 'Normal')  # Default to Normal if unknown
+
+        rank = rec.rank or 'Unknown'
+        rank_counts[rank][cls] += 1
+        total_counts[cls] += 1
+
+    # Add rows to recap (sorted by rank)
+    recap_rows_start = header_row + 1
+    current_row = recap_rows_start
+    for rank in sorted(rank_counts.keys()):
+        recap_ws.cell(row=current_row, column=1, value=rank).alignment = align_left
+        recap_ws.cell(row=current_row, column=1).font = body_font
+        for idx, cls in enumerate(['Underweight', 'Normal', 'Overweight', 'Obese Class 1', 'Obese Class 2', 'Obese Class 3'], start=2):
+            c = recap_ws.cell(row=current_row, column=idx, value=rank_counts[rank][cls])
+            c.font = body_font
+            c.alignment = align_center
+        current_row += 1
+
+    # Add TOTAL row
+    total_row_idx = current_row
+    recap_ws.cell(row=total_row_idx, column=1, value='TOTAL').font = Font(name='Calibri', size=11, bold=True)
+    recap_ws.cell(row=total_row_idx, column=1).alignment = align_left
+    for idx, cls in enumerate(['Underweight', 'Normal', 'Overweight', 'Obese Class 1', 'Obese Class 2', 'Obese Class 3'], start=2):
+        c = recap_ws.cell(row=total_row_idx, column=idx, value=total_counts[cls])
+        c.font = Font(name='Calibri', size=11, bold=True)
+        c.alignment = align_center
+
+    # Borders + table style for recap
+    last_col_letter = get_column_letter(len(recap_headers))
+    last_row = total_row_idx
+    _apply_border(recap_ws, header_row, last_row, 1, len(recap_headers), thin_border)
+    recap_table_ref = f"A{header_row}:{last_col_letter}{last_row}"
+    recap_table = Table(displayName='Tbl_RECAP', ref=recap_table_ref)
+    recap_table.tableStyleInfo = TableStyleInfo(
+        name='TableStyleMedium9',
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    recap_ws.add_table(recap_table)
+    _sheet_print_setup(recap_ws, header_row)
+    _auto_fit_columns(recap_ws, max_col=len(recap_headers), min_width=10, max_width=28)
+
+    # Unit sheets
+    unit_sheets = [
+        ('RHQ', 'RHQ'),
+        ('CAVITE', 'Cavite'),
+        ('LAGUNA', 'Laguna'),
+        ('BATANGAS', 'Batangas'),
+        ('RIZAL', 'Rizal'),
+        ('QUEZON', 'Quezon'),
+    ]
+
+    selected_unit_code = None
+    if report_unit and str(report_unit).strip() and str(report_unit).strip().upper() != 'ALL UNITS':
+        selected_unit_code = unit_key(str(report_unit))
+
+    if selected_unit_code:
+        unit_sheets_to_make = [u for u in unit_sheets if u[0] == selected_unit_code]
+        if not unit_sheets_to_make:
+            unit_sheets_to_make = unit_sheets
+    else:
+        unit_sheets_to_make = unit_sheets
+
+    for unit_code, sheet_name in unit_sheets_to_make:
+        unit_recs = [r for r in recs if unit_key(getattr(r, 'unit', None)) == unit_code]
+        # Always create the sheet, even if empty
+        ws = wb.create_sheet(sheet_name)
+        unit_headers = ['No.', 'Rank/Name', 'Height (cm)', 'Weight (kg)', 'Age', 'BMI Result', 'BMI Classification', 'Weight to Lose (kg)']
+
+        _write_report_header(
+            ws,
+            title=f"BMI MONITORING REPORT - {sheet_name.upper()}",
+            col_count=len(unit_headers),
+            period_text=(f"Report Period: {period_str}" if period_str else 'Report Period: -'),
+            unit_text=f"Unit Scope: {sheet_name}",
+        )
+
+        header_row = ws.max_row + 1
+        for col_idx, h in enumerate(unit_headers, 1):
+            cell = ws.cell(row=header_row, column=col_idx, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = align_center
+
+        # Sort for a stable, official-looking output
+        unit_recs_sorted = sorted(unit_recs, key=lambda r: ((r.rank or ''), (r.name or '')))
+
+        data_start_row = header_row + 1
+        current_row = data_start_row
+        for i, rec in enumerate(unit_recs_sorted, 1):
+            bmi_value = compute_bmi(rec.weight_kg or 0, rec.height_cm or 0)
+            pnp_classification = classify_pnp_bmi(bmi_value, rec.age or 0)
+            metrics = compute_weight_metrics(rec.height_cm or 0, rec.weight_kg or 0, rec.age or 0)
+            weight_to_lose = float(metrics['weight_to_lose']) if metrics.get('weight_to_lose') and metrics['weight_to_lose'] > 0 else None
+
+            row_values = [
+                i,
+                f"{rec.rank or ''} {rec.name or ''}".strip(),
+                float(rec.height_cm) if rec.height_cm is not None else None,
+                float(rec.weight_kg) if rec.weight_kg is not None else None,
+                int(rec.age) if rec.age is not None else None,
+                float(bmi_value),
+                pnp_classification,
+                weight_to_lose,
+            ]
+            for col_idx, val in enumerate(row_values, 1):
+                cell = ws.cell(row=current_row, column=col_idx, value=val)
+                cell.font = body_font
+                if col_idx == 2 or col_idx == 7:
+                    cell.alignment = align_left
+                elif col_idx in (1, 5):
+                    cell.alignment = align_center
+                else:
+                    cell.alignment = align_right
+
+                # Number formats
+                if col_idx == 3:
+                    cell.number_format = '0.0'
+                if col_idx == 4:
+                    cell.number_format = '0.0'
+                if col_idx == 5:
+                    cell.number_format = '0'
+                if col_idx == 6:
+                    cell.number_format = '0.00'
+                if col_idx == 8:
+                    cell.number_format = '0.0'
+
+            current_row += 1
+
+        # Apply borders + table style (only over header+data)
+        last_data_row = current_row - 1
+        if last_data_row < header_row:
+            last_data_row = header_row
+        _apply_border(ws, header_row, last_data_row, 1, len(unit_headers), thin_border)
+
+        table_name = f"Tbl_{sheet_name.upper()}"
+        table_ref = f"A{header_row}:{get_column_letter(len(unit_headers))}{last_data_row}"
+        unit_table = Table(displayName=table_name, ref=table_ref)
+        unit_table.tableStyleInfo = TableStyleInfo(
+            name='TableStyleMedium9',
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False,
+        )
+        ws.add_table(unit_table)
+
+        # Signatories at bottom (Excel only)
+        ws.append([])
+        ws.append([])
+        sig_start = ws.max_row + 1
+        ws.cell(row=sig_start, column=1, value='Prepared by:').font = Font(name='Calibri', size=11, bold=True)
+        ws.cell(row=sig_start, column=2, value=prepared_by).font = body_font
+        ws.cell(row=sig_start + 1, column=1, value='Verified Correct by:').font = Font(name='Calibri', size=11, bold=True)
+        ws.cell(row=sig_start + 1, column=2, value=verified_by).font = body_font
+        ws.cell(row=sig_start + 2, column=1, value='Noted by:').font = Font(name='Calibri', size=11, bold=True)
+        ws.cell(row=sig_start + 2, column=2, value=noted_by).font = body_font
+
+        _sheet_print_setup(ws, header_row)
+        _auto_fit_columns(ws, max_col=len(unit_headers), min_width=10, max_width=38)
+
     stream = BytesIO()
     wb.save(stream)
     stream.seek(0)
@@ -868,7 +1133,9 @@ def list_bmi(
         q = q.filter(models.BMIRecord.personnel_id == personnel_id)
     
     if unit and unit != 'All Units':
-        q = q.filter(models.BMIRecord.unit == unit)
+        unit_opts = unit_variants(unit)
+        if unit_opts:
+            q = q.filter(func.upper(models.BMIRecord.unit).in_(unit_opts))
     
     if month and year:
         q = q.filter(
@@ -1118,19 +1385,19 @@ def get_bmi_timeline(
     """
     # Get the personnel info
     personnel = db.query(models.Personnel).filter(models.Personnel.id == personnel_id).first()
-    
+
     # Get all BMI records for timeline
     records = db.query(models.BMIRecord).filter(
         models.BMIRecord.personnel_id == personnel_id
     ).order_by(models.BMIRecord.date_taken.asc()).all()
-    
+
     # If no records linked by personnel_id, try by name matching
     if not records and personnel:
         name_pattern = f"%{personnel.first_name}%{personnel.last_name}%"
         records = db.query(models.BMIRecord).filter(
             models.BMIRecord.name.ilike(name_pattern)
         ).order_by(models.BMIRecord.date_taken.asc()).all()
-    
+
     timeline = []
     for rec in records:
         timeline.append({
@@ -1139,8 +1406,90 @@ def get_bmi_timeline(
             "classification": rec.classification,
             "weight_kg": rec.weight_kg
         })
-    
+
     return timeline
+
+
+@router.get('/history-data/{personnel_id}')
+def get_bmi_history_data(personnel_id: int, report_month: int = None, report_year: int = None, db: Session = Depends(get_db)):
+    """
+    Get BMI history data for PDF reports with dynamic 14-month timeline.
+    """
+    if not report_month or not report_year:
+        # Default to current month/year if not provided
+        now = datetime.utcnow()
+        report_month = report_month or now.month
+        report_year = report_year or now.year
+
+    # Get personnel info
+    personnel = db.query(models.Personnel).filter(models.Personnel.id == personnel_id).first()
+    if not personnel:
+        raise HTTPException(status_code=404, detail="Personnel not found")
+
+    # Get BMI history for this personnel
+    history_records = db.query(BMIHistory).filter(
+        BMIHistory.personnel_id == personnel_id
+    ).order_by(BMIHistory.year.asc(), BMIHistory.month.asc()).all()
+
+    # If bmi_history is empty (older deployments / legacy data), fall back to bmi_records.
+    record_month_map: Dict[Tuple[int, int], models.BMIRecord] = {}
+    if not history_records:
+        legacy_records = db.query(models.BMIRecord).filter(
+            models.BMIRecord.personnel_id == personnel_id
+        ).order_by(models.BMIRecord.date_taken.desc(), models.BMIRecord.id.desc()).all()
+        for r in legacy_records:
+            if not r.date_taken:
+                continue
+            key = (r.date_taken.year, r.date_taken.month)
+            if key not in record_month_map:
+                record_month_map[key] = r
+
+    # Build 14-month timeline with report month as the rightmost column
+    months_data = []
+    for i in range(13, -1, -1):  # 14 months backward from report month
+        target_month = report_month - i
+        target_year = report_year
+
+        # Adjust for year boundaries
+        while target_month <= 0:
+            target_month += 12
+            target_year -= 1
+        while target_month > 12:
+            target_month -= 12
+            target_year += 1
+
+        # Find matching history record
+        matching_record = None
+        for rec in history_records:
+            if rec.month == target_month and rec.year == target_year:
+                matching_record = rec
+                break
+
+        legacy_record = record_month_map.get((target_year, target_month)) if record_month_map else None
+
+        months_data.append({
+            "month": target_month,
+            "year": target_year,
+            "month_name": calendar.month_abbr[target_month],
+            "weight": matching_record.weight if matching_record else (legacy_record.weight_kg if legacy_record else None),
+            "bmi": matching_record.bmi_result if matching_record else (legacy_record.bmi if legacy_record else None),
+            "classification": matching_record.bmi_classification if matching_record else (legacy_record.classification if legacy_record else None)
+        })
+
+    return {
+        "personnel": {
+            "id": personnel.id,
+            "name": f"{personnel.first_name} {personnel.last_name}",
+            "rank": personnel.rank,
+            "unit": personnel.unit
+        },
+        "report_period": {
+            "month": report_month,
+            "year": report_year,
+            "month_name": calendar.month_name[report_month]
+        },
+        "monthly_data": months_data
+    }
 
 
 @router.get('/personnel-list')
@@ -1291,6 +1640,10 @@ async def update_bmi(
     record_id: int,
     rank: str = Form(...),
     name: str = Form(...),
+    first_name: Optional[str] = Form(None),
+    last_name: Optional[str] = Form(None),
+    suffix: Optional[str] = Form(None),
+    personnel_id: Optional[int] = Form(None),
     unit: str = Form(...),
     age: int = Form(...),
     sex: str = Form(...),
@@ -1333,33 +1686,42 @@ async def update_bmi(
     name = name.upper() if isinstance(name, str) else name
     unit = unit.upper() if isinstance(unit, str) else unit
     sex = sex.upper() if isinstance(sex, str) else sex
+    first_name = first_name.upper() if isinstance(first_name, str) else first_name
+    last_name = last_name.upper() if isinstance(last_name, str) else last_name
+    suffix = suffix.upper() if isinstance(suffix, str) else suffix
+
+    resolved_personnel_id = preserved_personnel_id or resolve_personnel_id(
+        db,
+        personnel_id,
+        first_name,
+        last_name,
+        suffix,
+        unit,
+    )
 
     # Parse date early to enforce monthly uniqueness
-    parsed_date_check = parse_date_taken(date_taken) if date_taken else datetime.utcnow()
+    parsed_date_check = parse_date_taken(date_taken) if date_taken else None
+    parsed_date_check = parsed_date_check or datetime.utcnow()
 
-    # VALIDATION: Prevent duplicate BMI records for same person in the same month (excluding current record)
-    dup = db.query(models.BMIRecord).filter(
+    # Mark any previously-latest records for this personnel/name as NOT latest
+    db.query(models.BMIRecord).filter(
         models.BMIRecord.name.ilike(name),
-        extract('month', models.BMIRecord.date_taken) == parsed_date_check.month,
-        extract('year', models.BMIRecord.date_taken) == parsed_date_check.year,
-        models.BMIRecord.id != record_id
-    ).first()
-    if dup:
-        raise HTTPException(status_code=400, detail='A BMI record already exists for this person for the selected month. You can edit the existing record instead.')
-
-    # NEW: Mark the old record as NOT latest
-    old_record.is_latest = False
+        models.BMIRecord.is_latest == True,
+    ).update({models.BMIRecord.is_latest: False}, synchronize_session=False)
     db.commit()
     
-    # Parse name to first and last for file naming
-    parts = name.strip().split()
-    first_name = parts[0] if parts else ''
-    last_name = parts[-1] if len(parts) > 1 else ''
-    unit_folder = unit.upper()
-    folder_abs = uploads_abs('bmi', unit_folder, bmi_folder_name(first_name, last_name))
-    folder_rel = uploads_rel('bmi', unit_folder, bmi_folder_name(first_name, last_name))
+    # Use explicit name parts when provided (more reliable than parsing full name)
+    parts = name.strip().split() if name else []
+    first_name_for_path = (first_name or '').strip() or (parts[0] if parts else '')
+    last_name_for_path = (last_name or '').strip() or (parts[-1] if len(parts) > 1 else '')
+
+    safe_unit_folder = safe_path_component(unit, 'UNIT').upper()
+    safe_first = safe_path_component(first_name_for_path, 'FIRST').upper()
+    safe_last = safe_path_component(last_name_for_path, 'LAST').upper()
+    folder_abs = uploads_abs('bmi', safe_unit_folder, bmi_folder_name(safe_first, safe_last))
+    folder_rel = uploads_rel('bmi', safe_unit_folder, bmi_folder_name(safe_first, safe_last))
     os.makedirs(folder_abs, exist_ok=True)
-    base_name = f"{first_name}_{last_name}" if last_name else first_name
+    base_name = f"{safe_first}_{safe_last}" if safe_last else safe_first
     
     # Determine photo paths for the NEW record
     # Use new photos if uploaded, otherwise reuse old photo paths
@@ -1392,7 +1754,8 @@ async def update_bmi(
         right_photo_path = f"{folder_rel}/{right_name}".replace("\\", "/")
     
     # Parse date
-    parsed_date = parse_date_taken(date_taken) if date_taken else datetime.utcnow()
+    parsed_date = parse_date_taken(date_taken) if date_taken else None
+    parsed_date = parsed_date or datetime.utcnow()
     
     # Calculate new BMI and classification
     bmi_value = compute_bmi(weight_kg, height_cm)
@@ -1416,7 +1779,7 @@ async def update_bmi(
     """)
     
     result = db.execute(insert_sql, {
-        'personnel_id': preserved_personnel_id,
+        'personnel_id': resolved_personnel_id,
         'rank': rank,
         'name': name,
         'unit': unit,
@@ -1446,6 +1809,37 @@ async def update_bmi(
     
     # Fetch the newly created record to return
     new_record = db.query(models.BMIRecord).filter(models.BMIRecord.id == new_record_id).first()
+
+    # Upsert BMI history snapshot for the month (used by the 14-month PDF timeline)
+    if resolved_personnel_id:
+        history = db.query(BMIHistory).filter(
+            BMIHistory.personnel_id == resolved_personnel_id,
+            BMIHistory.month == parsed_date.month,
+            BMIHistory.year == parsed_date.year,
+        ).first()
+        if history:
+            history.weight = float(weight_kg)
+            history.bmi_result = float(bmi_value)
+            history.bmi_classification = pnp_classification
+            history.waist = waist_cm
+            history.hip = hip_cm
+            history.wrist = wrist_cm
+            history.created_at = parsed_date
+        else:
+            history = BMIHistory(
+                personnel_id=resolved_personnel_id,
+                month=parsed_date.month,
+                year=parsed_date.year,
+                weight=float(weight_kg),
+                bmi_result=float(bmi_value),
+                bmi_classification=pnp_classification,
+                waist=waist_cm,
+                hip=hip_cm,
+                wrist=wrist_cm,
+                created_at=parsed_date,
+            )
+            db.add(history)
+        db.commit()
     
     # Return the NEW record (which is now the latest)
     return new_record

@@ -11,7 +11,7 @@ class DocumentSchema(BaseModel):
     upload_date: Optional[datetime] = None
     file_url: Optional[str] = None
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class TrainingCertificateSchema(BaseModel):
     id: int
@@ -19,7 +19,7 @@ class TrainingCertificateSchema(BaseModel):
     title: str
     file_path: str
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class PersonnelCreate(BaseModel):
     rank: str
@@ -72,7 +72,7 @@ class PersonnelSchema(BaseModel):
     documents: List[DocumentSchema] = []
     trainings: List[TrainingCertificateSchema] = []
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class BMICreate(BaseModel):
     rank: str

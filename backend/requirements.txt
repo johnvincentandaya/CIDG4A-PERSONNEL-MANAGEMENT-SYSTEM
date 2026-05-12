@@ -6,6 +6,7 @@ SQLAlchemy
 alembic
 python-dotenv
 pydantic
+itsdangerous
 reportlab
 openpyxl
 jinja2

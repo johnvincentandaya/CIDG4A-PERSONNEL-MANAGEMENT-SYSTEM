@@ -18,6 +18,7 @@ export const API_BASE = (process.env.REACT_APP_API_BASE || defaultBase).replace(
 
 export const api = axios.create({
   baseURL: API_BASE,
+  withCredentials: true,
 });
 
 export function absolutizePath(path) {
@@ -25,7 +26,8 @@ export function absolutizePath(path) {
   const p = String(path).replace(/\\\\/g, '/').replace(/\\/g, '/');
   const idx = p.indexOf('uploads/');
   const rel = idx >= 0 ? p.slice(idx) : p.replace(/^\//, '');
+  const encoded = rel.split('/').map(encodeURIComponent).join('/');
   const prefix = API_BASE ? API_BASE : '';
-  return `${prefix}/${rel}`.replace(/([^:]\/)\/+/g, '$1');
+  return `${prefix}/api/files/${encoded}`.replace(/([^:]\/)\/+/g, '$1');
 }
 
