@@ -17,14 +17,14 @@ function classificationClass(name){
 export default function BMIMonitor(){
   const [records, setRecords] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({rank:'', last_name:'', first_name:'', suffix:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
+  const [form, setForm] = useState({rank:'', last_name:'', first_name:'', mi:'', suffix:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
   const [front, setFront] = useState(null);
   const [left, setLeft] = useState(null);
   const [right, setRight] = useState(null);
 
   // Update modal state
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [updateForm, setUpdateForm] = useState({rank:'', last_name:'', first_name:'', suffix:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
+  const [updateForm, setUpdateForm] = useState({rank:'', last_name:'', first_name:'', mi:'', suffix:'', unit:'RHQ', age:'', sex:'Male', height_cm:'', weight_kg:'', waist_cm:'', hip_cm:'', wrist_cm:'', date_taken: '', status: 'Active', status_custom: ''});
   const [updateFront, setUpdateFront] = useState(null);
   const [updateLeft, setUpdateLeft] = useState(null);
   const [updateRight, setUpdateRight] = useState(null);
@@ -92,7 +92,7 @@ export default function BMIMonitor(){
   }
 
   async function viewSingleResult(record){
-    const safeBaseName = `BMI_RESULT_${(record?.name || 'personnel').replace(/\s+/g, '_')}`;
+    const safeBaseName = `BMI_RESULT_${((record?.display_name || record?.name) || 'personnel').replace(/\s+/g, '_')}`;
     try {
       const res = await api.get(`/api/bmi/${record.id}/pdf`, {
         params: { file_name: safeBaseName },
@@ -113,11 +113,13 @@ export default function BMIMonitor(){
     if(!valid()) return alert('Please fill required fields and upload three photos');
     const data = new FormData();
     // compose full name from parts (first, last, suffix)
-    const fullName = `${form.first_name || ''} ${form.last_name || ''} ${form.suffix || ''}`.replace(/\s+/g,' ').trim();
+    const miPart = form.mi ? `${(form.mi || '').trim()}.` : '';
+    const fullName = `${form.first_name || ''} ${miPart} ${form.last_name || ''} ${form.suffix || ''}`.replace(/\s+/g,' ').trim();
     // append the composed name for backend compatibility, plus individual parts
     data.append('name', fullName);
     if (form.first_name) data.append('first_name', form.first_name);
     if (form.last_name) data.append('last_name', form.last_name);
+    if (form.mi) data.append('mi', form.mi);
     if (form.suffix) data.append('suffix', form.suffix);
     // append remaining form fields
     Object.keys(form).forEach(k=>{ if(['first_name','last_name','suffix'].includes(k)) return; if(form[k]) data.append(k, form[k]); });
@@ -140,11 +142,11 @@ export default function BMIMonitor(){
         if (window.confirm(detail + '\n\nOpen existing record for editing instead?')){
           // try to find personnel by name in personnelList
           const target = `${(form.first_name||'').trim()} ${(form.last_name||'').trim()}`.replace(/\s+/g,' ').trim().toLowerCase();
-          let found = (personnelList || []).find(p => ((p.name||'').toLowerCase().replace(/\s+/g,' ').includes(target)));
+          let found = (personnelList || []).find(p => ((p.name || p.display_name || '').toLowerCase().replace(/\s+/g,' ').includes(target)));
           if (!found) {
             // fallback: match by first and last
             found = (personnelList || []).find(p => {
-              const n = (p.name||'').toLowerCase();
+              const n = (p.name || p.display_name || '').toLowerCase();
               return n.includes((form.first_name||'').toLowerCase()) && n.includes((form.last_name||'').toLowerCase());
             });
           }
@@ -175,7 +177,7 @@ export default function BMIMonitor(){
   function openUpdate(record) {
     setUpdateRecordId(record.id);
     // parse name into first/mi/last
-    const parts = (record.name || '').trim().split(/\s+/).filter(Boolean);
+    const parts = ((record.display_name || record.name) || '').trim().split(/\s+/).filter(Boolean);
     const first = parts[0] || '';
     const last = parts.length > 1 ? parts[parts.length - 1] : '';
     // const mi = parts.length > 2 ? parts.slice(1, parts.length - 1).join(' ') : ''; // Not used
@@ -183,7 +185,8 @@ export default function BMIMonitor(){
       rank: record.rank || '',
       first_name: first,
       last_name: last,
-      suffix: '',
+      mi: record.mi || '',
+      suffix: record.suffix || '',
       unit: record.unit || 'RHQ',
       age: record.age || '',
       sex: record.sex || 'Male',
@@ -218,10 +221,12 @@ export default function BMIMonitor(){
     
     const data = new FormData();
     // compose full name
-    const fullName = `${updateForm.first_name || ''} ${updateForm.last_name || ''} ${updateForm.suffix || ''}`.replace(/\s+/g,' ').trim();
+    const miPart = updateForm.mi ? `${(updateForm.mi || '').trim()}.` : '';
+    const fullName = `${updateForm.first_name || ''} ${miPart} ${updateForm.last_name || ''} ${updateForm.suffix || ''}`.replace(/\s+/g,' ').trim();
     data.append('name', fullName);
     if (updateForm.first_name) data.append('first_name', updateForm.first_name);
     if (updateForm.last_name) data.append('last_name', updateForm.last_name);
+    if (updateForm.mi) data.append('mi', updateForm.mi);
     if (updateForm.suffix) data.append('suffix', updateForm.suffix);
     Object.keys(updateForm).forEach(k => { 
       if(['first_name','last_name','suffix'].includes(k)) return; 
@@ -250,7 +255,7 @@ export default function BMIMonitor(){
   }
 
   async function deleteBMIRecord(record) {
-    const ok = window.confirm(`Delete BMI record for ${record?.name || 'this personnel'} dated ${formatDate(record?.date_taken)}? This action cannot be undone.`);
+    const ok = window.confirm(`Delete BMI record for ${((record?.display_name || record?.name) || 'this personnel')} dated ${formatDate(record?.date_taken)}? This action cannot be undone.`);
     if (!ok) return;
 
     try {
@@ -293,7 +298,7 @@ export default function BMIMonitor(){
       const q = search.trim().toLowerCase();
       const haystack = [
         r.rank || '',
-        r.name || '',
+        (r.display_name || r.name) || '',
         r.unit || '',
       ].join(' ').toLowerCase();
       ok = ok && haystack.includes(q);
@@ -335,7 +340,8 @@ export default function BMIMonitor(){
       if (!response || !response.data || (!response.data.history && !response.data.history?.length)) {
         const personnel = personnelList.find(p => p.id === personnelId);
         if (personnel) {
-          response = await api.get(`/api/bmi/history/by-name/${encodeURIComponent(personnel.name)}`);
+          const nameToQuery = personnel.name || personnel.display_name || '';
+          response = await api.get(`/api/bmi/history/by-name/${encodeURIComponent(nameToQuery)}`);
         }
       }
       
@@ -533,7 +539,7 @@ export default function BMIMonitor(){
                 {filteredRecords.map(r=> (
                   <tr key={r.id}>
                     <td>{r.rank}</td>
-                    <td>{r.name}</td>
+                    <td>{r.display_name || r.name}</td>
                     <td>{r.unit}</td>
                     <td>{r.age}</td>
                     <td>{r.height_cm}</td>
@@ -570,7 +576,7 @@ export default function BMIMonitor(){
 
       {/* New Record Modal */}
       {showModal && (
-        <div className="modal d-block" tabIndex={-1}>
+        <div className="modal d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2100 }}>
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
@@ -593,7 +599,8 @@ export default function BMIMonitor(){
                     </select>
                   </div>
                   <div className="col-md-3"><label>Last Name *</label><input className="form-control" value={form.last_name} onChange={e=>setForm({...form,last_name:e.target.value})} /></div>
-                  <div className="col-md-3"><label>First Name *</label><input className="form-control" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})} /></div>
+                  <div className="col-md-2"><label>First Name *</label><input className="form-control" value={form.first_name} onChange={e=>setForm({...form,first_name:e.target.value})} /></div>
+                  <div className="col-md-1"><label>MI</label><input className="form-control" value={form.mi} onChange={e=>setForm({...form,mi:e.target.value})} maxLength={1} /></div>
                   <div className="col-md-3"><label>Unit *</label><select className="form-select" value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})}><option>RHQ</option><option>Cavite</option><option>Laguna</option><option>Batangas</option><option>Rizal</option><option>Quezon</option></select></div>
                   <div className="col-md-3"><label>Suffix</label><input className="form-control" value={form.suffix} onChange={e=>setForm({...form,suffix:e.target.value})} /></div>
                   <div className="col-md-3"><label>Age *</label><input type="number" className="form-control" value={form.age} onChange={e=>setForm({...form,age:e.target.value})} /></div>
@@ -638,7 +645,7 @@ export default function BMIMonitor(){
 
       {/* Update BMI Record Modal */}
       {showUpdateModal && (
-        <div className="modal d-block" tabIndex={-1}>
+        <div className="modal d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2300 }}>
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header bg-warning">
@@ -671,9 +678,13 @@ export default function BMIMonitor(){
                     <label>Last Name *</label>
                     <input className="form-control" value={updateForm.last_name} onChange={e=>setUpdateForm({...updateForm,last_name:e.target.value})} />
                   </div>
-                  <div className="col-md-3">
+                  <div className="col-md-2">
                     <label>First Name *</label>
                     <input className="form-control" value={updateForm.first_name} onChange={e=>setUpdateForm({...updateForm,first_name:e.target.value})} />
+                  </div>
+                  <div className="col-md-1">
+                    <label>MI</label>
+                    <input className="form-control" value={updateForm.mi} onChange={e=>setUpdateForm({...updateForm,mi:e.target.value})} maxLength={1} />
                   </div>
                   <div className="col-md-2">
                     <label>Suffix</label>
@@ -788,7 +799,7 @@ export default function BMIMonitor(){
 
       {/* Report Modal */}
       {showReportModal && (
-        <div className="modal d-block" tabIndex={-1}>
+        <div className="modal d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2050 }}>
           <div className="modal-dialog modal-lg">
             <div className="modal-content">
               <div className="modal-header">
@@ -945,8 +956,8 @@ export default function BMIMonitor(){
                     >
                       <option value="">-- Select Personnel --</option>
                       {personnelList.map(p => (
-                        <option key={p.id || p.name} value={p.id || p.name}>
-                          {p.name} {p.rank ? `(${p.rank})` : ''} - {p.unit} [{p.total_records || 0} records]
+                        <option key={p.id || p.name || p.display_name} value={p.id || p.name || p.display_name}>
+                          {(p.name || p.display_name)} {p.rank ? `(${p.rank})` : ''} - {p.unit} [{p.total_records || 0} records]
                         </option>
                       ))}
                     </select>
@@ -1010,7 +1021,7 @@ export default function BMIMonitor(){
                       <div className="row">
                         <div className="col-md-3">
                           <p className="mb-1"><strong>Rank:</strong> {dateRecord.rank}</p>
-                          <p className="mb-1"><strong>Name:</strong> {dateRecord.name}</p>
+                          <p className="mb-1"><strong>Name:</strong> {dateRecord.display_name || dateRecord.name}</p>
                           <p className="mb-1"><strong>Unit:</strong> {dateRecord.unit}</p>
                         </div>
                         <div className="col-md-3">
@@ -1087,7 +1098,7 @@ export default function BMIMonitor(){
                             <tr key={rec.id || index} className={index === 0 ? 'table-primary' : ''}>
                               <td>{formatDate(rec.date_taken)}</td>
                               <td>{rec.rank}</td>
-                              <td>{rec.name}</td>
+                              <td>{rec.display_name || rec.name}</td>
                               <td>{rec.unit}</td>
                               <td>{rec.age}</td>
                               <td>{rec.height_cm} cm</td>

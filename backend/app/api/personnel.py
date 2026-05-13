@@ -22,7 +22,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Border, Side, Alignment
 from fastapi.responses import StreamingResponse
 from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -717,6 +717,56 @@ def generate_form201_report(
         query = query.filter(models.Personnel.status == status)
     
     all_personnel = query.all()
+
+    # Handle optional signature image uploads and save them to uploads/form_201/signatures
+    prepared_sig_abs = None
+    verified_sig_abs = None
+    noted_sig_abs = None
+    sig_folder_abs = uploads_abs('form_201', 'signatures')
+    os.makedirs(sig_folder_abs, exist_ok=True)
+    image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp'}
+    try:
+        if prepared_by_signature is not None:
+            pext = (os.path.splitext(getattr(prepared_by_signature, 'filename', '') or '')[1] or '').lower()
+            if pext in image_exts:
+                data = prepared_by_signature.file.read()
+                if data:
+                    safe_name = safe_path_component(prepared_by or 'prepared')
+                    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                    dest_name = f"SIGN_{safe_name}_{timestamp}{pext}"
+                    dest_abs = os.path.join(str(sig_folder_abs), dest_name)
+                    with open(dest_abs, 'wb') as out:
+                        out.write(data)
+                    prepared_sig_abs = dest_abs
+        if verified_by_signature is not None:
+            pext = (os.path.splitext(getattr(verified_by_signature, 'filename', '') or '')[1] or '').lower()
+            if pext in image_exts:
+                data = verified_by_signature.file.read()
+                if data:
+                    safe_name = safe_path_component(verified_by or 'verified')
+                    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                    dest_name = f"SIGN_{safe_name}_{timestamp}{pext}"
+                    dest_abs = os.path.join(str(sig_folder_abs), dest_name)
+                    with open(dest_abs, 'wb') as out:
+                        out.write(data)
+                    verified_sig_abs = dest_abs
+        if noted_by_signature is not None:
+            pext = (os.path.splitext(getattr(noted_by_signature, 'filename', '') or '')[1] or '').lower()
+            if pext in image_exts:
+                data = noted_by_signature.file.read()
+                if data:
+                    safe_name = safe_path_component(noted_by or 'noted')
+                    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                    dest_name = f"SIGN_{safe_name}_{timestamp}{pext}"
+                    dest_abs = os.path.join(str(sig_folder_abs), dest_name)
+                    with open(dest_abs, 'wb') as out:
+                        out.write(data)
+                    noted_sig_abs = dest_abs
+    except Exception:
+        # Don't fail report generation on signature save errors
+        prepared_sig_abs = prepared_sig_abs or None
+        verified_sig_abs = verified_sig_abs or None
+        noted_sig_abs = noted_sig_abs or None
     
     # Group by unit and sort
     units = ['RHQ', 'CAVITE', 'LAGUNA', 'BATANGAS', 'RIZAL', 'QUEZON']
@@ -1071,6 +1121,55 @@ def personnel_report(
         q = q.filter(func.upper(models.Personnel.status) == up(status))
 
     all_personnel = q.all()
+    # Handle optional signature image uploads and save them to uploads/form_201/signatures
+    prepared_sig_abs = None
+    verified_sig_abs = None
+    noted_sig_abs = None
+    sig_folder_abs = uploads_abs('form_201', 'signatures')
+    os.makedirs(sig_folder_abs, exist_ok=True)
+    image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp'}
+    try:
+        if prepared_by_signature is not None:
+            pext = (os.path.splitext(getattr(prepared_by_signature, 'filename', '') or '')[1] or '').lower()
+            if pext in image_exts:
+                data = prepared_by_signature.file.read()
+                if data:
+                    safe_name = safe_path_component(prepared_by_name or 'prepared')
+                    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                    dest_name = f"SIGN_{safe_name}_{timestamp}{pext}"
+                    dest_abs = os.path.join(str(sig_folder_abs), dest_name)
+                    with open(dest_abs, 'wb') as out:
+                        out.write(data)
+                    prepared_sig_abs = dest_abs
+        if verified_by_signature is not None:
+            pext = (os.path.splitext(getattr(verified_by_signature, 'filename', '') or '')[1] or '').lower()
+            if pext in image_exts:
+                data = verified_by_signature.file.read()
+                if data:
+                    safe_name = safe_path_component(verified_by_name or 'verified')
+                    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                    dest_name = f"SIGN_{safe_name}_{timestamp}{pext}"
+                    dest_abs = os.path.join(str(sig_folder_abs), dest_name)
+                    with open(dest_abs, 'wb') as out:
+                        out.write(data)
+                    verified_sig_abs = dest_abs
+        if noted_by_signature is not None:
+            pext = (os.path.splitext(getattr(noted_by_signature, 'filename', '') or '')[1] or '').lower()
+            if pext in image_exts:
+                data = noted_by_signature.file.read()
+                if data:
+                    safe_name = safe_path_component(noted_by_name or 'noted')
+                    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                    dest_name = f"SIGN_{safe_name}_{timestamp}{pext}"
+                    dest_abs = os.path.join(str(sig_folder_abs), dest_name)
+                    with open(dest_abs, 'wb') as out:
+                        out.write(data)
+                    noted_sig_abs = dest_abs
+    except Exception:
+        # Don't fail report generation on signature save errors
+        prepared_sig_abs = prepared_sig_abs or None
+        verified_sig_abs = verified_sig_abs or None
+        noted_sig_abs = noted_sig_abs or None
     
     # Debug: Check the type and content of all_personnel
     print(f"DEBUG all_personnel type: {type(all_personnel)}, length: {len(all_personnel) if all_personnel else 0}")
@@ -1177,23 +1276,56 @@ def personnel_report(
         checked_label: str = 'Verified Correct by:',
     ):
         sig_row = start_row
+        # We'll reserve one row for labels, one for signature image, then name and title rows
+        img_row = sig_row + 1
+        name_row = sig_row + 3
+        title_row = sig_row + 4
+
         # Prepared by
         ws.cell(row=sig_row, column=1).value = 'Prepared by:'
         ws.cell(row=sig_row, column=1).font = Font(bold=True)
-        ws.cell(row=sig_row+1, column=1).value = prepared_by_name or ''
-        ws.cell(row=sig_row+2, column=1).value = prepared_by_title or ''
-        
+        # Insert signature image if available
+        try:
+            from openpyxl.drawing.image import Image as XLImage
+            if prepared_sig_abs and os.path.exists(prepared_sig_abs):
+                img = XLImage(prepared_sig_abs)
+                img.width = 160
+                img.height = 50
+                ws.add_image(img, f'A{img_row}')
+        except Exception:
+            pass
+        ws.cell(row=name_row, column=1).value = prepared_by_name or ''
+        ws.cell(row=title_row, column=1).value = prepared_by_title or ''
+
         # Verified by / Checked by
         ws.cell(row=sig_row, column=4).value = checked_label or 'Verified Correct by:'
         ws.cell(row=sig_row, column=4).font = Font(bold=True)
-        ws.cell(row=sig_row+1, column=4).value = verified_by_name or ''
-        ws.cell(row=sig_row+2, column=4).value = verified_by_title or ''
-        
+        try:
+            from openpyxl.drawing.image import Image as XLImage
+            if verified_sig_abs and os.path.exists(verified_sig_abs):
+                img = XLImage(verified_sig_abs)
+                img.width = 160
+                img.height = 50
+                ws.add_image(img, f'D{img_row}')
+        except Exception:
+            pass
+        ws.cell(row=name_row, column=4).value = verified_by_name or ''
+        ws.cell(row=title_row, column=4).value = verified_by_title or ''
+
         # Noted by
         ws.cell(row=sig_row, column=7).value = 'Noted by:'
         ws.cell(row=sig_row, column=7).font = Font(bold=True)
-        ws.cell(row=sig_row+1, column=7).value = noted_by_name or ''
-        ws.cell(row=sig_row+2, column=7).value = noted_by_title or ''
+        try:
+            from openpyxl.drawing.image import Image as XLImage
+            if noted_sig_abs and os.path.exists(noted_sig_abs):
+                img = XLImage(noted_sig_abs)
+                img.width = 160
+                img.height = 50
+                ws.add_image(img, f'G{img_row}')
+        except Exception:
+            pass
+        ws.cell(row=name_row, column=7).value = noted_by_name or ''
+        ws.cell(row=title_row, column=7).value = noted_by_title or ''
 
     # ============================================================
     # TAB 1: LIST OF NUP - Sorted by Entry Number
@@ -1828,26 +1960,39 @@ def generate_form201_pdf(
         elements.append(t)
         elements.append(Spacer(1, 12))
 
-    # Footer signatories
-    signatory_rows = [[
-        Paragraph('<b>Prepared by:</b>', ParagraphStyle('sig_lbl', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
-        Paragraph('<b>Verified Correct by:</b>', ParagraphStyle('sig_lbl', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
-        Paragraph('<b>Noted by:</b>', ParagraphStyle('sig_lbl', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
-    ], [
-        Paragraph(f"<b>{(prepared_by or '').upper()}</b>", ParagraphStyle('sig_name', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
-        Paragraph(f"<b>{(verified_by or '').upper()}</b>", ParagraphStyle('sig_name', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
-        Paragraph(f"<b>{(noted_by or '').upper()}</b>", ParagraphStyle('sig_name', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
-    ], [
-        Paragraph((prepared_by_title or '').upper(), ParagraphStyle('sig_title', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER)),
-        Paragraph((verified_by_title or '').upper(), ParagraphStyle('sig_title', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER)),
-        Paragraph((noted_by_title or '').upper(), ParagraphStyle('sig_title', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER)),
-    ]]
+    # Footer signatories (labels, signature images, names, titles)
+    img_w = 160
+    img_h = 50
+    img_row = [
+        (RLImage(prepared_sig_abs, width=img_w, height=img_h) if prepared_sig_abs and os.path.exists(prepared_sig_abs) else Spacer(1, img_h)),
+        (RLImage(verified_sig_abs, width=img_w, height=img_h) if verified_sig_abs and os.path.exists(verified_sig_abs) else Spacer(1, img_h)),
+        (RLImage(noted_sig_abs, width=img_w, height=img_h) if noted_sig_abs and os.path.exists(noted_sig_abs) else Spacer(1, img_h)),
+    ]
+
+    signatory_rows = [
+        [
+            Paragraph('<b>Prepared by:</b>', ParagraphStyle('sig_lbl', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
+            Paragraph('<b>Verified Correct by:</b>', ParagraphStyle('sig_lbl', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
+            Paragraph('<b>Noted by:</b>', ParagraphStyle('sig_lbl', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
+        ],
+        img_row,
+        [
+            Paragraph(f"<b>{(prepared_by or '').upper()}</b>", ParagraphStyle('sig_name', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
+            Paragraph(f"<b>{(verified_by or '').upper()}</b>", ParagraphStyle('sig_name', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
+            Paragraph(f"<b>{(noted_by or '').upper()}</b>", ParagraphStyle('sig_name', parent=styles['Normal'], fontSize=9, alignment=TA_CENTER)),
+        ],
+        [
+            Paragraph((prepared_by_title or '').upper(), ParagraphStyle('sig_title', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER)),
+            Paragraph((verified_by_title or '').upper(), ParagraphStyle('sig_title', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER)),
+            Paragraph((noted_by_title or '').upper(), ParagraphStyle('sig_title', parent=styles['Normal'], fontSize=8, alignment=TA_CENTER)),
+        ]
+    ]
 
     signatory_table = Table(signatory_rows, colWidths=[(total_width / 3)] * 3)
     signatory_table.setStyle(TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LINEABOVE', (0, 1), (-1, 1), 0.5, colors.black),
+        ('LINEABOVE', (0, 2), (-1, 2), 0.5, colors.black),
         ('TOPPADDING', (0, 0), (-1, -1), 6),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
     ]))

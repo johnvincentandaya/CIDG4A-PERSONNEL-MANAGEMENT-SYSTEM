@@ -7,7 +7,7 @@ from datetime import datetime
 import calendar
 import os
 from .. import models
-from ..utils import safe_resolve_upload_path
+from ..utils import safe_resolve_upload_path, uploads_abs, safe_path_component
 
 
 def compute_bmi(weight_kg: Optional[float], height_cm: Optional[float]) -> float:
@@ -22,7 +22,7 @@ def compute_bmi(weight_kg: Optional[float], height_cm: Optional[float]) -> float
         return 0.0
 
 
-def draw_record_pdf_page(c: canvas.Canvas, rec: models.BMIRecord, db, prepared_by: str = "", noted_by: str = "", report_month: int = None, report_year: int = None) -> None:
+def draw_record_pdf_page(c: canvas.Canvas, rec: models.BMIRecord, db, prepared_by: str = "", verified_by: str = "", noted_by: str = "", report_month: int = None, report_year: int = None) -> None:
     """Draw the BMI form using absolute positioning only (no Platypus tables).
 
     This implementation follows the user's exact layout specs and uses
@@ -59,9 +59,9 @@ def draw_record_pdf_page(c: canvas.Canvas, rec: models.BMIRecord, db, prepared_b
     c.setFont('Helvetica-Bold', 20)
     c.drawCentredString(PAGE_WIDTH / 2.0, 555, title)
 
-    # PHOTO SECTION
+    # PHOTO + INFO SECTION (aligned on same baseline to avoid overlap)
     PHOTO_X = 20
-    PHOTO_Y = 330
+    PHOTO_Y = 300
     PHOTO_W = 380
     PHOTO_H = 190
     c.rect(PHOTO_X, PHOTO_Y, PHOTO_W, PHOTO_H, stroke=1, fill=0)
@@ -117,14 +117,14 @@ def draw_record_pdf_page(c: canvas.Canvas, rec: models.BMIRecord, db, prepared_b
 
     # INFO TABLE (absolute rows)
     INFO_X = 440
-    INFO_Y = 345
+    INFO_Y = PHOTO_Y
     INFO_W = 370
-    INFO_H = 180
+    INFO_H = PHOTO_H
     c.rect(INFO_X, INFO_Y, INFO_W, INFO_H, stroke=1, fill=0)
 
-    # Rows
-    ROW_H = 22
+    # Rows - compute row height to evenly distribute within info box
     labels = ['RANK/NAME', 'UNIT', 'AGE', 'GENDER', 'HEIGHT', 'WEIGHT', 'BMI RESULT', 'CLASSIFICATION']
+    ROW_H = float(INFO_H) / max(1, len(labels))
     # label column width and value column
     LABEL_W = 140
     VALUE_W = INFO_W - LABEL_W
@@ -137,24 +137,24 @@ def draw_record_pdf_page(c: canvas.Canvas, rec: models.BMIRecord, db, prepared_b
     def draw_text_shrink(text, fontname, max_size, box_x, box_w, y, align='left', min_size=6):
         size = max_size
         while size >= min_size:
-            width = c.stringWidth(text, fontname, size)
+            width = c.stringWidth(str(text), fontname, size)
             if width <= box_w - 6:
                 break
             size -= 0.5
         c.setFont(fontname, size)
         if align == 'left':
-            c.drawString(box_x + 4, y, text)
+            c.drawString(box_x + 4, y, str(text))
         else:
-            c.drawCentredString(box_x + box_w / 2.0, y, text)
+            c.drawCentredString(box_x + box_w / 2.0, y, str(text))
 
     # Draw rows from top down
+    top_y = INFO_Y + INFO_H
     for idx, label in enumerate(labels):
-        row_top = INFO_Y + INFO_H - (idx * ROW_H)
+        row_top = top_y - (idx * ROW_H)
         # horizontal line for row top
         c.line(INFO_X, row_top, INFO_X + INFO_W, row_top)
-        # vertical divider already drawn
-        # text baseline: place text vertically centered within row
-        text_y = row_top - ROW_H + (ROW_H - 11) / 2.0 + 2
+        # text baseline: vertically center within row
+        text_y = row_top - (ROW_H / 2.0) - 4
         draw_text_shrink(label, 'Helvetica-Bold', 11, INFO_X, LABEL_W, text_y, align='left')
         # values
         if label == 'RANK/NAME':
@@ -170,10 +170,10 @@ def draw_record_pdf_page(c: canvas.Canvas, rec: models.BMIRecord, db, prepared_b
         elif label == 'WEIGHT':
             val = f"{(rec.weight_kg or '')}"
         elif label == 'BMI RESULT':
-            bmi_value = compute_bmi(rec.weight_kg or 0, rec.height_cm or 0)
+            bmi_value = compute_bmi(getattr(rec, 'weight_kg', None), getattr(rec, 'height_cm', None))
             val = f"{bmi_value:.2f}" if bmi_value else ''
         elif label == 'CLASSIFICATION':
-            bmi_value = compute_bmi(rec.weight_kg or 0, rec.height_cm or 0)
+            bmi_value = compute_bmi(getattr(rec, 'weight_kg', None), getattr(rec, 'height_cm', None))
             if bmi_value <= 0:
                 val = ''
             elif bmi_value < 18.5:
@@ -286,6 +286,71 @@ def draw_record_pdf_page(c: canvas.Canvas, rec: models.BMIRecord, db, prepared_b
     c.line(sig_x + SIG_LEFT_W, sig_y + 20, sig_x + SIG_LEFT_W + SIG_RIGHT_W - 20, sig_y + 20)
     c.setFont('Helvetica', 10)
     c.drawString(sig_x + SIG_LEFT_W + 6, sig_y + 24, 'Certified Correct Signature:')
+
+    # Try to embed a signature image (prefer `verified_by`, then `prepared_by`, then `noted_by`).
+    def _find_signature_image_for_name(name: str):
+        if not name or not str(name).strip():
+            return None
+        try:
+            sig_folder = uploads_abs('form_201', 'signatures')
+            if not sig_folder or not os.path.exists(sig_folder):
+                return None
+            safe = safe_path_component(name)
+            candidates = []
+            for fn in os.listdir(sig_folder):
+                # look for files saved with SIGN_<safe_name>_timestamp.ext
+                if fn.lower().startswith('sign_') and safe.lower() in fn.lower():
+                    candidates.append(os.path.join(str(sig_folder), fn))
+            if not candidates:
+                # fallback: any file that contains the safe name
+                for fn in os.listdir(sig_folder):
+                    if safe.lower() in fn.lower():
+                        candidates.append(os.path.join(str(sig_folder), fn))
+            if not candidates:
+                return None
+            # pick most recently modified candidate
+            candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            return candidates[0]
+        except Exception:
+            return None
+
+    sig_path = None
+    name_to_print = ''
+    for candidate_name in (verified_by, prepared_by, noted_by):
+        if candidate_name and str(candidate_name).strip():
+            p = _find_signature_image_for_name(candidate_name)
+            if p:
+                sig_path = p
+                name_to_print = candidate_name
+                break
+
+    if sig_path:
+        try:
+            reader = ImageReader(sig_path)
+            iw, ih = reader.getSize()
+            max_w = SIG_RIGHT_W - 40
+            max_h = 48
+            scale = min(max_w / float(iw), max_h / float(ih), 1.0)
+            dw = iw * scale
+            dh = ih * scale
+            img_x = sig_x + SIG_LEFT_W + ((SIG_RIGHT_W - 20 - dw) / 2.0)
+            img_y = sig_y + 20 - dh - 4
+            c.drawImage(sig_path, img_x, img_y, width=dw, height=dh, preserveAspectRatio=True, mask='auto')
+        except Exception:
+            # if image embedding fails, silently continue and fall back to text-only label
+            pass
+
+    # Draw printed name under the signature line if available
+    if not name_to_print:
+        # prefer verified_by text, then prepared_by, then noted_by
+        name_to_print = (verified_by or prepared_by or noted_by or '').strip()
+    if name_to_print:
+        try:
+            c.setFont('Helvetica', 10)
+            center_x = sig_x + SIG_LEFT_W + (SIG_RIGHT_W / 2.0)
+            c.drawCentredString(center_x, sig_y - 6, name_to_print)
+        except Exception:
+            pass
 
     # BOTTOM TIMELINE - Full-width table with YEAR (spanning), MONTHS, WEIGHT rows
     TIM_X = 15

@@ -96,6 +96,7 @@ class BMISchema(BaseModel):
     rank: str
     name: str
     mi: Optional[str] = None
+    display_name: Optional[str] = None
     unit: str
     age: int
     sex: Optional[str]

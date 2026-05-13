@@ -33,6 +33,16 @@ def get_db():
     finally:
         db.close()
 
+
+def safe_filename(name: Optional[str], fallback: str = 'file') -> str:
+    if not name:
+        return fallback
+    s = str(name).strip()
+    # allow alphanumerics, dash, underscore, dot
+    cleaned = ''.join(ch if (ch.isalnum() or ch in '-_.') else '_' for ch in s)
+    cleaned = cleaned.strip('_.')
+    return cleaned or fallback
+
 # NOTE: Database migrations are executed on application startup
 # (see `app.database.migrate_db()` called from `backend/main.py`).
 
@@ -44,6 +54,9 @@ PNP_BMI_AGE_TABLE = [
 ]
 
 from .bmi_strict import draw_record_pdf_page
+import logging
+
+logger = logging.getLogger(__name__)
 
 @router.post('/', response_model=schemas.BMISchema)
 async def create_bmi(
@@ -276,7 +289,7 @@ def bmi_report(
             # Use exact A4 landscape dimensions: 842 x 595 pts
             c = canvas.Canvas(buffer, pagesize=(842, 595))
             for rec in records:
-                draw_record_pdf_page(c, rec, db=db, prepared_by=prepared_by, noted_by=noted_by,
+                draw_record_pdf_page(c, rec, db=db, prepared_by=prepared_by, verified_by=verified_by, noted_by=noted_by,
                                     report_month=report_month, report_year=report_year)
                 c.showPage()
 
@@ -1100,7 +1113,7 @@ def get_distinct_personnel_bmi(db: Session = Depends(get_db)):
         
         result.append({
             "id": rec.id,
-            "name": rec.name,
+            "name": (getattr(rec, 'display_name', None) or rec.name),
             "rank": rec.rank,
             "unit": rec.unit,
             "personnel_id": rec.personnel_id,
@@ -1299,54 +1312,38 @@ async def update_bmi(
     bmi_value = compute_bmi(weight_kg, height_cm)
     pnp_classification = classify_pnp_bmi(bmi_value, age)
     
-    # Use raw SQL INSERT to create the NEW record
-    # This bypasses any ORM session issues that might cause overwriting
-    from sqlalchemy import text
-    
-    # Insert new record with raw SQL, including is_latest=True
-    insert_sql = text("""
-        INSERT INTO bmi_records (
-            personnel_id, rank, name, unit, age, sex, height_cm, weight_kg,
-            waist_cm, hip_cm, wrist_cm, date_taken, bmi, classification, result,
-            photo_front, photo_left, photo_right, status, status_custom, is_latest
-        ) VALUES (
-            :personnel_id, :rank, :name, :unit, :age, :sex, :height_cm, :weight_kg,
-            :waist_cm, :hip_cm, :wrist_cm, :date_taken, :bmi, :classification, :result,
-            :photo_front, :photo_left, :photo_right, :status, :status_custom, :is_latest
+    # Create the NEW record using ORM to ensure DB compatibility
+    try:
+        new_record = models.BMIRecord(
+            personnel_id=resolved_personnel_id,
+            rank=rank,
+            name=name,
+            unit=unit,
+            age=age,
+            sex=sex,
+            height_cm=height_cm,
+            weight_kg=weight_kg,
+            waist_cm=waist_cm,
+            hip_cm=hip_cm,
+            wrist_cm=wrist_cm,
+            date_taken=parsed_date,
+            bmi=bmi_value,
+            classification=pnp_classification,
+            result=f"{bmi_value:.2f}",
+            photo_front=front_photo_path,
+            photo_left=left_photo_path,
+            photo_right=right_photo_path,
+            status=status,
+            status_custom=status_custom,
+            is_latest=True,
         )
-    """)
-    
-    result = db.execute(insert_sql, {
-        'personnel_id': resolved_personnel_id,
-        'rank': rank,
-        'name': name,
-        'unit': unit,
-        'age': age,
-        'sex': sex,
-        'height_cm': height_cm,
-        'weight_kg': weight_kg,
-        'waist_cm': waist_cm,
-        'hip_cm': hip_cm,
-        'wrist_cm': wrist_cm,
-        'date_taken': parsed_date,
-        'bmi': bmi_value,
-        'classification': pnp_classification,
-        'result': f"{bmi_value:.2f}",
-        'photo_front': front_photo_path,
-        'photo_left': left_photo_path,
-        'photo_right': right_photo_path,
-        'status': status,
-        'status_custom': status_custom,
-        'is_latest': True,  # NEW: Mark new record as latest
-    })
-    
-    db.commit()
-    
-    # Get the ID of the newly inserted record
-    new_record_id = result.lastrowid
-    
-    # Fetch the newly created record to return
-    new_record = db.query(models.BMIRecord).filter(models.BMIRecord.id == new_record_id).first()
+        db.add(new_record)
+        db.commit()
+        db.refresh(new_record)
+    except Exception as e:
+        logger.exception('Failed to create new BMI record during update')
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
     # If we linked to an existing Personnel and MI was provided, persist it if not already set
     if resolved_personnel_id and mi and (mi.strip()):

@@ -21,10 +21,13 @@ def is_auth_enabled() -> bool:
 
 def require_auth(request: Request) -> None:
     """Dependency that enforces authentication when auth is enabled."""
-    if not is_auth_enabled():
+    enabled = is_auth_enabled()
+    sess_auth = bool(request.session.get("authenticated"))
+
+    if not enabled:
         return
 
-    if not request.session.get("authenticated"):
+    if not sess_auth:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",

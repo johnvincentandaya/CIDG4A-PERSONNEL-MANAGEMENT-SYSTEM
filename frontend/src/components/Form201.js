@@ -679,7 +679,7 @@ export default function Form201(){
       </div>
 
       {showModal && (
-        <div className="modal d-block" tabIndex={-1}>
+        <div className="modal d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2200 }}>
           <div className="modal-dialog modal-xl">
             <div className="modal-content">
               <div className="modal-header">
@@ -864,8 +864,8 @@ export default function Form201(){
       )}
 
       {showReportModal && (
-        <div className="modal d-block" tabIndex={-1}>
-            <div className="modal-dialog modal-lg">
+        <div className="modal d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <div className="modal-dialog modal-lg modal-dialog-scrollable">
               <div className="modal-content">
                 <div className="modal-header">
                   <h5 className="modal-title">Generate Form 201 Report</h5>
@@ -919,6 +919,11 @@ export default function Form201(){
                               <input className="form-control mb-1" placeholder="Name" value={preparedByName} onChange={e=>setPreparedByName(e.target.value)} />
                               <input className="form-control mb-1" placeholder="Position" value={preparedByTitle} onChange={e=>setPreparedByTitle(e.target.value)} />
                               <input type="file" accept="image/*" className="form-control" onChange={e=>setPreparedBySignature(validateImage(e.target.files?.[0] || null))} />
+                              {preparedBySignature && (
+                                <div className="mt-2">
+                                  <img src={URL.createObjectURL(preparedBySignature)} alt="Prepared signature preview" style={{maxWidth:'100%', maxHeight:120, border:'1px solid #ddd', padding:4, borderRadius:4}} />
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="col-md-4">
@@ -927,6 +932,11 @@ export default function Form201(){
                               <input className="form-control mb-1" placeholder="Name" value={verifiedByName} onChange={e=>setVerifiedByName(e.target.value)} />
                               <input className="form-control mb-1" placeholder="Position" value={verifiedByTitle} onChange={e=>setVerifiedByTitle(e.target.value)} />
                               <input type="file" accept="image/*" className="form-control" onChange={e=>setVerifiedBySignature(validateImage(e.target.files?.[0] || null))} />
+                              {verifiedBySignature && (
+                                <div className="mt-2">
+                                  <img src={URL.createObjectURL(verifiedBySignature)} alt="Verified signature preview" style={{maxWidth:'100%', maxHeight:120, border:'1px solid #ddd', padding:4, borderRadius:4}} />
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="col-md-4">
@@ -935,6 +945,11 @@ export default function Form201(){
                               <input className="form-control mb-1" placeholder="Name" value={notedByName} onChange={e=>setNotedByName(e.target.value)} />
                               <input className="form-control mb-1" placeholder="Position" value={notedByTitle} onChange={e=>setNotedByTitle(e.target.value)} />
                               <input type="file" accept="image/*" className="form-control" onChange={e=>setNotedBySignature(validateImage(e.target.files?.[0] || null))} />
+                              {notedBySignature && (
+                                <div className="mt-2">
+                                  <img src={URL.createObjectURL(notedBySignature)} alt="Noted signature preview" style={{maxWidth:'100%', maxHeight:120, border:'1px solid #ddd', padding:4, borderRadius:4}} />
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -1065,11 +1080,33 @@ export default function Form201(){
       )}
 
       {confirmCancel && (
-        <div className="modal d-block"><div className="modal-dialog"><div className="modal-content"><div className="modal-header"><h5>Confirm</h5></div><div className="modal-body">Discard changes?</div><div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setConfirmCancel(false)}>No</button><button className="btn btn-danger" onClick={()=>{ setConfirmCancel(false); setShowModal(false); }}>Yes, discard</button></div></div></div></div>
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header"><h5>Confirm</h5></div>
+              <div className="modal-body">Discard changes?</div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={()=>setConfirmCancel(false)}>No</button>
+                <button className="btn btn-danger" onClick={()=>{ setConfirmCancel(false); setShowModal(false); }}>Yes, discard</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {confirmAdd && (
-        <div className="modal d-block"><div className="modal-dialog"><div className="modal-content"><div className="modal-header"><h5>Confirm</h5></div><div className="modal-body">{editId ? 'Update personnel record?' : 'Save new personnel record?'}</div><div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setConfirmAdd(false)}>Cancel</button><button className="btn btn-primary" onClick={()=>{ setConfirmAdd(false); doSubmit(); }}>Yes, Save</button></div></div></div></div>
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog">
+            <div className="modal-content">
+              <div className="modal-header"><h5>Confirm</h5></div>
+              <div className="modal-body">{editId ? 'Update personnel record?' : 'Save new personnel record?'}</div>
+              <div className="modal-footer">
+                <button className="btn btn-secondary" onClick={()=>setConfirmAdd(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={()=>{ setConfirmAdd(false); doSubmit(); }}>Yes, Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>
